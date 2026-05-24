@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #fafafa;
+  --foreground: #111111;
+  --primary: #4f46e5;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --primary: #6366f1;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+
+  --font-sans: var(--font-inter);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* fluid typography — single source of truth, use these only */
+  --text-display: clamp(2.5rem, 1.5rem + 3vw, 3.5rem);
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: -0.02em;
+
+  --text-h1: clamp(1.875rem, 1.25rem + 2vw, 2.25rem);
+  --text-h1--line-height: 1.15;
+  --text-h1--letter-spacing: -0.015em;
+
+  --text-h2: clamp(1.375rem, 1rem + 1vw, 1.5rem);
+  --text-h2--line-height: 1.25;
+  --text-h2--letter-spacing: -0.01em;
+
+  --text-h3: 1.125rem;
+  --text-h3--line-height: 1.4;
+
+  --text-body: 1rem;
+  --text-body--line-height: 1.6;
+
+  --text-small: 0.875rem;
+  --text-small--line-height: 1.5;
+
+  --text-tiny: 0.75rem;
+  --text-tiny--line-height: 1.4;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/* Universal "obvious-affordance" pass — every truly interactive element gets
+   the pointer cursor unless explicitly disabled. */
+button:not([disabled]):not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+a[href],
+label[for],
+summary,
+[role="tab"],
+[role="menuitem"],
+[role="option"],
+input[type="checkbox"]:not([disabled]),
+input[type="radio"]:not([disabled]),
+input[type="range"]:not([disabled]),
+select:not([disabled]),
+[data-clickable] {
+  cursor: pointer;
+}
+
+button[disabled],
+button:disabled,
+[aria-disabled="true"],
+input[disabled] {
+  cursor: not-allowed;
+}
+
+/* Always-visible thin scrollbar — used in scrollable panels so the
+   "there's more" affordance survives macOS auto-hide. */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--foreground) 30%, transparent)
+                   transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--foreground) 28%, transparent);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--foreground) 45%, transparent);
+}
+
+/* Skip-to-content accessibility helper. Only visible on focus. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 1000;
+  padding: 0.5rem 1rem;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+  border-bottom-right-radius: 6px;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+/* Inline-flex buttons + button-styled links never wrap their label. */
+button.inline-flex,
+a.inline-flex {
+  white-space: nowrap;
+}
+
+@keyframes toplines-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: toplines-fade-up 320ms cubic-bezier(0.4, 0, 0.2, 1) both; }
