@@ -103,6 +103,47 @@ export interface Crosstab {
   rows: CrosstabRow[]
 }
 
+// ── Tabbook ──────────────────────────────────────────────────────────────────
+// A single wide grid (one universe): every question's Total on the left and all
+// demographic banner groups to the right, sharing one fixed column set. Mirrors
+// the PSI reference Tabbook (RV_Tabbook / LV_Tabbook).
+
+export interface TabbookColumn {
+  group: string // banner group header, e.g. "Age", "Race (W College/No College)"
+  groupKey: string // dim / question key the column belongs to ("__total__" for Total)
+  label: string // column header, e.g. "18-29", "White College", or "Total"
+  value: string // underlying raw category value (equals label for Total)
+  isTotal: boolean
+  unweightedN: number // raw respondents in this banner category (question-independent)
+}
+
+export interface TabbookGroup {
+  label: string // group header text
+  span: number // number of columns the group covers
+}
+
+export interface TabbookRow {
+  label: string // response option
+  pct: number[] // weighted column-% aligned to columns; index 0 = Total
+  significant: boolean[] // aligned to columns; Total is always false
+}
+
+export interface TabbookQuestion {
+  key: string
+  prompt: string
+  type: QuestionType
+  rows: TabbookRow[] // empty for numeric / open_ended
+  note?: string // one-line summary for numeric / open_ended questions
+}
+
+export interface Tabbook {
+  name: string
+  universe: "RV" | "LV"
+  groups: TabbookGroup[] // grouped header row: Total (span 1) then each banner group
+  columns: TabbookColumn[] // flat column list, index 0 = Total
+  questions: TabbookQuestion[]
+}
+
 export interface WeightTarget {
   dim: string
   targets: Record<string, number> // value -> target share (0..1)

@@ -1,15 +1,25 @@
 "use client"
 
 import { useState } from "react"
-import { Download, FileSpreadsheet, FileText, Loader2, Sparkles, Table2, Users } from "lucide-react"
+import { FileSpreadsheet, FileText, Grid3x3, Loader2, Scale, Sparkles, Table2, Users } from "lucide-react"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { downloadExport, downloadReport, fetchSummary, type ClientPayload, type RunConfig } from "@/lib/client-api"
+import { fetchExportFile, fetchReportFile, fetchSummary, type ClientPayload, type FetchedFile, type RunConfig } from "@/lib/client-api"
+import { ExportConfirmButton } from "../export-confirm"
 import type { AiSummary } from "@/lib/types"
+
+type ExportSpec = {
+  key: string
+  label: string
+  icon: typeof FileText
+  hint: string
+  fetchFile: () => Promise<FetchedFile>
+  tablePreview?: () => Promise<string>
+  manifest?: string[]
+}
 
 export function ReportPanel({ payload, csvText, name, config }: { payload: ClientPayload; csvText: string; name: string; config: RunConfig }) {
   const [summary, setSummary] = useState<AiSummary | null>(null)
   const [genLoading, setGenLoading] = useState(false)
-  const [busy, setBusy] = useState<string | null>(null)
   const [meta, setMeta] = useState({ pollster: "", client: "", fieldStart: "", fieldEnd: "" })
   const [includeCrosstabs, setIncludeCrosstabs] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -29,23 +39,15 @@ export function ReportPanel({ payload, csvText, name, config }: { payload: Clien
     }
   }
 
-  const run = async (key: string, fn: () => Promise<void>) => {
-    setBusy(key)
-    setError(null)
-    try {
-      await fn()
-    } catch (e) {
-      setError((e as Error).message)
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  const exports = [
-    { key: "pdf", label: "Topline report (PDF)", icon: FileText, hint: "Cover, exec summary, RV/LV toplines, methodology, diagnostics" + (includeCrosstabs ? ", crosstabs" : ""), fn: () => downloadReport({ ...args, summary, includeCrosstabs, meta }) },
-    { key: "xlsx", label: "Workbook (Excel)", icon: FileSpreadsheet, hint: "Summary, RV & LV toplines, crosstabs sheets", fn: () => downloadExport({ ...args, format: "xlsx" }) },
-    { key: "csv", label: "Toplines (CSV)", icon: Table2, hint: "Tidy question × option with RV / LV / unweighted %", fn: () => downloadExport({ ...args, format: "csv" }) },
-    { key: "respondents", label: "Respondent-level (CSV)", icon: Users, hint: "Every row + weight_rv, weight_lv, p_vote", fn: () => downloadExport({ ...args, format: "respondents" }) },
+  const exports: ExportSpec[] = [
+    { key: "pdf", label: "Topline report (PDF)", icon: FileText, hint: "Cover, exec summary, RV/LV toplines, methodology, diagnostics" + (includeCrosstabs ? ", crosstabs" : ""), fetchFile: () => fetchReportFile({ ...args, summary, includeCrosstabs, meta }) },
+    { key: "xlsx", label: "Workbook (Excel)", icon: FileSpreadsheet, hint: "Toplines, RV & LV tabbooks, electorate, diagnostics", fetchFile: () => fetchExportFile({ ...args, format: "xlsx" }), tablePreview: async () => (await fetchExportFile({ ...args, format: "csv" })).blob.text(), manifest: ["Summary", "RV & LV toplines", "RV & LV tabbooks", "electorate", "diagnostics"] },
+    { key: "tabbook-rv", label: "RV Tabbook (CSV)", icon: Grid3x3, hint: "Every question's Total + all crosstab banners — registered voters", fetchFile: () => fetchExportFile({ ...args, format: "tabbook-rv" }) },
+    { key: "tabbook-lv", label: "LV Tabbook (CSV)", icon: Grid3x3, hint: "Every question's Total + all crosstab banners — likely voters", fetchFile: () => fetchExportFile({ ...args, format: "tabbook-lv" }) },
+    { key: "composition", label: "Electorate (CSV)", icon: Users, hint: "RV & LV weighted composition by demographic", fetchFile: () => fetchExportFile({ ...args, format: "composition" }) },
+    { key: "diagnostics", label: "Diagnostics (CSV)", icon: Scale, hint: "DEFF, effective n, covariate balance (SMD), per-question MoE", fetchFile: () => fetchExportFile({ ...args, format: "diagnostics" }) },
+    { key: "csv", label: "Toplines (CSV)", icon: Table2, hint: "Tidy question × option with RV / LV / unweighted %", fetchFile: () => fetchExportFile({ ...args, format: "csv" }) },
+    { key: "respondents", label: "Respondent-level (CSV)", icon: Users, hint: "Every row + weight_rv, weight_lv, p_vote", fetchFile: () => fetchExportFile({ ...args, format: "respondents" }) },
   ]
 
   return (
@@ -104,25 +106,20 @@ export function ReportPanel({ payload, csvText, name, config }: { payload: Clien
       </Card>
 
       <Card>
-        <CardHeader title="Export" hint="Everything runs server-side; downloads start immediately" />
+        <CardHeader title="Export" hint="Preview each file, then confirm to download" />
         <CardBody className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           {exports.map((e) => (
-            <button
+            <ExportConfirmButton
               key={e.key}
-              onClick={() => run(e.key, e.fn)}
-              disabled={busy !== null}
-              className="group flex items-center gap-3 rounded-lg border border-foreground/10 px-3.5 py-3 text-left transition-colors hover:border-primary/30 hover:bg-primary/[0.03] disabled:opacity-50"
-            >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-foreground/[0.04] text-foreground/60 group-hover:text-primary">
-                {busy === e.key ? <Loader2 size={16} className="animate-spin" /> : <e.icon size={16} />}
-              </span>
-              <span className="min-w-0">
-                <span className="flex items-center gap-1.5 text-small font-medium group-hover:text-primary">
-                  {e.label} <Download size={12} className="text-foreground/35" />
-                </span>
-                <span className="block truncate text-tiny text-foreground/50">{e.hint}</span>
-              </span>
-            </button>
+              variant="tile"
+              label={e.label}
+              hint={e.hint}
+              icon={e.icon}
+              title={`Preview ${e.label}, then confirm to download`}
+              fetchFile={e.fetchFile}
+              tablePreview={e.tablePreview}
+              manifest={e.manifest}
+            />
           ))}
         </CardBody>
       </Card>

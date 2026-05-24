@@ -34,7 +34,7 @@ const TABS: { id: View; label: string; icon: typeof Database; guide: string }[] 
   { id: "lv", label: "Likely Voter", icon: Users, guide: "The turnout model: the P(vote) distribution, vote-history buckets, and editable Q3/Q4/Q5 weight maps, projected turnout, and steepness (k). Raising turnout or weights pulls more respondents into the likely electorate; the whole report recomputes." },
   { id: "weighting", label: "Benchmarks & Weighting", icon: Scale, guide: "Choose the weighting set (A/B/C) and review the raking diagnostics, convergence log, recall calibration, and SOCAL target derivation. The set determines which demographics the sample is weighted to." },
   { id: "results", label: "Results", icon: BarChart3, guide: "Read-only output: the weighted toplines for both universes side by side, the RV→LV shift, and the Monte Carlo + bootstrap uncertainty." },
-  { id: "crosstabs", label: "Crosstabs", icon: Table2, guide: "Build any question-by-demographic crosstab in either universe; cells in brand color are statistically significant. Read-only analysis." },
+  { id: "crosstabs", label: "Crosstabs", icon: Table2, guide: "The Tabbook: every question's Total on the left and all demographic banner columns to the right, in one wide grid. Toggle banners, switch universe, and download the RV/LV tabbook CSV. Cells in brand color are statistically significant." },
   { id: "report", label: "Report", icon: FileText, guide: "Generate the AI executive summary and download the PDF, Excel workbook, or CSV." },
 ]
 
@@ -135,7 +135,7 @@ export function Workspace() {
   // ── Upload screen ──
   if (!csvText) {
     return (
-      <section className="flex min-h-[calc(100vh-3.5rem)] items-center justify-center px-4 py-10">
+      <section className="flex min-h-[calc(100dvh-3.5rem)] items-center justify-center px-4 py-10">
         <Container>
           <UploadPanel onData={onData} onLoadSample={onLoadSample} loading={loading} error={error} />
         </Container>

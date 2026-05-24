@@ -2,12 +2,114 @@
 // string; XLSX uses exceljs (kept out of the bundle via serverExternalPackages).
 
 import ExcelJS from "exceljs"
-import type { Crosstab } from "./types"
-import type { ClientPayload, FullResult } from "./psi/service"
+import type { Crosstab, Tabbook } from "./types"
+import type { BalanceRow, ClientPayload, FullResult } from "./psi/service"
+import { bannerGroupLabel } from "./psi/tabbook"
 
 function esc(v: string | number): string {
   const s = String(v)
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+const pct1 = (x: number) => `${x.toFixed(1)}%`
+
+// ── Tabbook CSV (one universe) ──────────────────────────────────────────────
+// Matches the PSI reference layout: a survey-name banner, then per question a
+// title row, a grouped banner-header row, a column-header row, an (unweighted n)
+// row, and one row per response option, with three blank rows between questions.
+export function buildTabbookCsv(tb: Tabbook): string {
+  const ncol = tb.columns.length + 1 // +1 for the leading Response/label column
+  const blank = new Array(ncol).fill("").join(",")
+  const lines: string[] = []
+  lines.push(["Survey name:"].concat(new Array(ncol - 1).fill("")).map(esc).join(","))
+  lines.push([tb.name].concat(new Array(ncol - 1).fill("")).map(esc).join(","))
+  lines.push(blank)
+
+  // grouped header row: leading blank, then each group label + (span-1) blanks
+  const groupRow = ["", ...tb.groups.flatMap((g) => [g.label, ...new Array(g.span - 1).fill("")])]
+  const colHeaderRow = ["Response", ...tb.columns.map((c) => c.label)]
+  const nRow = ["(unweighted n)", ...tb.columns.map((c) => (c.isTotal ? "" : String(c.unweightedN)))]
+
+  for (const q of tb.questions) {
+    lines.push([q.prompt].concat(new Array(ncol - 1).fill("")).map(esc).join(","))
+    lines.push(groupRow.map(esc).join(","))
+    lines.push(colHeaderRow.map(esc).join(","))
+    lines.push(nRow.map(esc).join(","))
+    if (q.rows.length === 0) {
+      lines.push([q.note || "—"].concat(new Array(ncol - 1).fill("")).map(esc).join(","))
+    } else {
+      for (const r of q.rows) {
+        lines.push([r.label, ...r.pct.map((p) => pct1(p))].map(esc).join(","))
+      }
+    }
+    lines.push(blank, blank, blank)
+  }
+  return lines.join("\n")
+}
+
+// ── Weight Diagnostics CSV ──────────────────────────────────────────────────
+export function buildDiagnosticsCsv(p: ClientPayload, rvBalance: BalanceRow[], lvBalance: BalanceRow[]): string {
+  const rv = p.rv.diagnostics
+  const lv = p.lvUniverse.diagnostics
+  const lines: string[] = []
+  const row = (cells: (string | number)[]) => lines.push(cells.map(esc).join(","))
+
+  row(["Weighting Diagnostics — Summary Statistics", "", "", ""])
+  row(["Statistic", "RV Value", "LV Value", "Notes"])
+  row(["DEFF", rv.deff, lv.deff, "Design effect: 1.0=ideal, >2.0=concerning"])
+  row(["Kish_DEFF", rv.kishDeff, lv.kishDeff, "Kish 1+CV^2(w) approximation"])
+  row(["effective_N", rv.effectiveN, lv.effectiveN, "n / DEFF — real statistical power"])
+  row(["n_unweighted", rv.n, lv.n, "Raw respondents used"])
+  row(["margin_of_error", `±${rv.moe}%`, `±${lv.moe}%`, "95% CI at p=0.5, DEFF-adjusted"])
+  row(["weight_min", rv.weightMin, lv.weightMin, "Smallest individual weight"])
+  row(["weight_mean", rv.weightMean, lv.weightMean, "Normalised to 1"])
+  row(["weight_max", rv.weightMax, lv.weightMax, "Largest individual weight"])
+  row([])
+  row([])
+
+  for (const [label, balance] of [["── RV ──", rvBalance], ["── LV ──", lvBalance]] as const) {
+    row(["Covariate Balance After Weighting (SMD < 0.10 = balanced)", "", "", "", "", "", ""])
+    row([label, "", "", "", "", "", ""])
+    row(["Variable", "Category", "Target %", "Weighted %", "Diff (pp)", "SMD", "Balanced?"])
+    for (const b of balance) {
+      row([b.variable, b.category, b.target.toFixed(2), b.weighted.toFixed(2), b.diff.toFixed(2), b.smd.toFixed(3), b.balanced ? "balanced" : "review"])
+    }
+    row([])
+    row([])
+  }
+
+  row(["Margin of Error by Question (DEFF-adjusted, 95% CI)", "", "", ""])
+  row(["Question", "Response", "Weighted % (RV)", "MoE (±pp)"])
+  for (const t of p.toplines) {
+    if (t.type === "numeric" || t.type === "open_ended") continue
+    for (const o of t.rv.options) row([t.prompt, o.label, o.pct.toFixed(1), t.rv.moe])
+  }
+  return lines.join("\n")
+}
+
+// ── Electorate Composition CSV ──────────────────────────────────────────────
+// RV then LV weighted composition per demographic banner. Weighted_N is derived
+// from the share × kept sample (weights are normalised to mean 1).
+export function buildCompositionCsv(p: ClientPayload): string {
+  const kept = p.quality.kept
+  const lines: string[] = []
+  const row = (cells: (string | number)[]) => lines.push(cells.map(esc).join(","))
+  for (const [title, pick] of [
+    ["Registered Voters Electorate (weighted)", (v: { rv: number; lv: number }) => v.rv],
+    ["Likely Voters Electorate (derived; weighted)", (v: { rv: number; lv: number }) => v.lv],
+  ] as const) {
+    row([title, "", "", ""])
+    row(["Variable", "Category", "Weighted_N", "Weighted_%"])
+    for (const d of p.composition) {
+      d.values.forEach((v, i) => {
+        const share = pick(v)
+        row([i === 0 ? bannerGroupLabel(d.key) : "", v.value, ((share / 100) * kept).toFixed(1), `${share.toFixed(1)}%`])
+      })
+    }
+    row([])
+    row([])
+  }
+  return lines.join("\n")
 }
 
 // Tidy toplines CSV: one row per (question, option) with RV / LV / unweighted %.
@@ -45,7 +147,52 @@ export function buildRespondentCsv(full: FullResult): string {
   return lines.join("\n")
 }
 
-export async function buildWorkbook(p: ClientPayload, crosstabs: Crosstab[]): Promise<Buffer> {
+export interface WorkbookExtras {
+  tabbookRv?: Tabbook
+  tabbookLv?: Tabbook
+  balanceRv?: BalanceRow[]
+  balanceLv?: BalanceRow[]
+}
+
+// One Tabbook worksheet: grouped banner header (merged), column header, the
+// (unweighted n) row, then a block per question.
+function addTabbookSheet(wb: ExcelJS.Workbook, label: string, tb: Tabbook) {
+  const ws = wb.addWorksheet(label)
+  ws.getColumn(1).width = 40
+  for (let i = 2; i <= tb.columns.length + 1; i++) ws.getColumn(i).width = 11
+
+  const groupRow = ws.addRow(["", ...tb.groups.flatMap((g) => [g.label, ...new Array(g.span - 1).fill("")])])
+  groupRow.font = { bold: true }
+  // merge each group label across its span
+  let col = 2 // column 1 is the Response label column
+  for (const g of tb.groups) {
+    if (g.span > 1) ws.mergeCells(groupRow.number, col, groupRow.number, col + g.span - 1)
+    const cell = ws.getCell(groupRow.number, col)
+    cell.alignment = { horizontal: "center" }
+    col += g.span
+  }
+  ws.addRow(["Response", ...tb.columns.map((c) => c.label)]).font = { bold: true }
+  ws.addRow(["(unweighted n)", ...tb.columns.map((c) => (c.isTotal ? "" : c.unweightedN))])
+  ws.addRow([])
+
+  for (const q of tb.questions) {
+    ws.addRow([q.prompt]).font = { bold: true }
+    if (q.rows.length === 0) {
+      ws.addRow([q.note || "—"])
+    } else {
+      for (const r of q.rows) {
+        const xr = ws.addRow([r.label, ...r.pct.map((v) => Number(v.toFixed(1)))])
+        r.significant.forEach((sig, i) => {
+          if (sig) xr.getCell(i + 2).font = { bold: true }
+        })
+      }
+    }
+    ws.addRow([])
+  }
+  ws.views = [{ state: "frozen", xSplit: 1, ySplit: 3 }]
+}
+
+export async function buildWorkbook(p: ClientPayload, crosstabs: Crosstab[], extras: WorkbookExtras = {}): Promise<Buffer> {
   const wb = new ExcelJS.Workbook()
   wb.creator = "Toplines · PSI Pathway 3"
   wb.created = new Date()
@@ -104,6 +251,60 @@ export async function buildWorkbook(p: ClientPayload, crosstabs: Crosstab[]): Pr
     }
     sheet.getColumn(1).width = 36
     for (let i = 2; i <= 13; i++) sheet.getColumn(i).width = 13
+  }
+
+  // Tabbooks: every question's Total + all banner groups in one wide grid.
+  if (extras.tabbookRv) addTabbookSheet(wb, "RV Tabbook", extras.tabbookRv)
+  if (extras.tabbookLv) addTabbookSheet(wb, "LV Tabbook", extras.tabbookLv)
+
+  // Electorate composition (RV + LV) per demographic banner.
+  {
+    const ws = wb.addWorksheet("Electorate")
+    ws.columns = [{ width: 26 }, { width: 30 }, { width: 14 }, { width: 12 }]
+    const kept = p.quality.kept
+    for (const [title, pick] of [
+      ["Registered Voters Electorate (weighted)", (v: { rv: number; lv: number }) => v.rv],
+      ["Likely Voters Electorate (derived; weighted)", (v: { rv: number; lv: number }) => v.lv],
+    ] as const) {
+      ws.addRow([title]).font = { bold: true }
+      ws.addRow(["Variable", "Category", "Weighted N", "Weighted %"]).font = { bold: true }
+      for (const d of p.composition) {
+        d.values.forEach((v, i) => {
+          const share = pick(v)
+          ws.addRow([i === 0 ? bannerGroupLabel(d.key) : "", v.value, Number(((share / 100) * kept).toFixed(1)), `${share.toFixed(1)}%`])
+        })
+      }
+      ws.addRow([])
+    }
+  }
+
+  // Weighting diagnostics: summary stats + covariate balance per universe.
+  {
+    const ws = wb.addWorksheet("Diagnostics")
+    ws.columns = [{ width: 22 }, { width: 30 }, { width: 12 }, { width: 12 }, { width: 11 }, { width: 9 }, { width: 11 }]
+    const rv = p.rv.diagnostics
+    const lv = p.lvUniverse.diagnostics
+    ws.addRow(["Summary Statistics", "RV", "LV"]).font = { bold: true }
+    const stat: [string, string | number, string | number][] = [
+      ["DEFF", rv.deff, lv.deff],
+      ["Kish DEFF", rv.kishDeff, lv.kishDeff],
+      ["Effective N", rv.effectiveN, lv.effectiveN],
+      ["n (unweighted)", rv.n, lv.n],
+      ["Margin of error", `±${rv.moe}%`, `±${lv.moe}%`],
+      ["Weight min", rv.weightMin, lv.weightMin],
+      ["Weight max", rv.weightMax, lv.weightMax],
+    ]
+    stat.forEach((r) => (ws.addRow(r).getCell(1).font = { bold: true }))
+    ws.addRow([])
+    for (const [label, balance] of [["Covariate balance — RV", extras.balanceRv], ["Covariate balance — LV", extras.balanceLv]] as const) {
+      if (!balance) continue
+      ws.addRow([label]).font = { bold: true }
+      ws.addRow(["Variable", "Category", "Target %", "Weighted %", "Diff (pp)", "SMD", "Balanced?"]).font = { bold: true }
+      for (const b of balance) {
+        ws.addRow([b.variable, b.category, Number(b.target.toFixed(2)), Number(b.weighted.toFixed(2)), Number(b.diff.toFixed(2)), Number(b.smd.toFixed(3)), b.balanced ? "balanced" : "review"])
+      }
+      ws.addRow([])
+    }
   }
 
   const buf = await wb.xlsx.writeBuffer()

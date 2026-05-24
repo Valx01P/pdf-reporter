@@ -281,18 +281,18 @@ export function ReportPreview({
         </div>
       )}
 
-      <div className="relative min-h-[78vh] overflow-hidden rounded-lg border border-foreground/10 bg-foreground/[0.02]">
+      <div className="relative min-h-[70dvh] overflow-hidden rounded-lg border border-foreground/10 bg-foreground/[0.02]">
         {tab === "pdf" &&
           (pdfLoading && !pdfUrl ? (
             <Centered>Building your report…</Centered>
           ) : pdfUrl ? (
-            <iframe src={`${pdfUrl}#toolbar=1&view=FitH`} title="Report preview" className="h-[78vh] w-full" />
+            <iframe src={`${pdfUrl}#toolbar=1&view=FitH`} title="Report preview" className="h-[70dvh] w-full" />
           ) : (
-            <div className="h-[78vh]" />
+            <div className="h-[70dvh]" />
           ))}
 
         {tab === "excel" && (
-          <div className="h-[78vh] overflow-auto p-4">
+          <div className="h-[70dvh] overflow-auto p-4">
             {csvLoading && !csvData ? (
               <Centered>Preparing the workbook preview…</Centered>
             ) : csvData ? (
@@ -308,11 +308,11 @@ export function ReportPreview({
         )}
 
         {tab === "csv" && (
-          <div className="h-[78vh] overflow-auto p-4">
+          <div className="h-[70dvh] overflow-auto p-4">
             {csvLoading && !csvData ? (
               <Centered>Preparing the CSV…</Centered>
             ) : csvData ? (
-              <pre className="whitespace-pre rounded-md bg-foreground/[0.03] p-3 font-mono text-tiny text-foreground/80">{csvData}</pre>
+              <pre className="w-max min-w-full whitespace-pre rounded-md bg-foreground/[0.03] p-3 font-mono text-tiny text-foreground/80">{csvData}</pre>
             ) : null}
           </div>
         )}
@@ -332,7 +332,7 @@ export function ReportPreview({
 
 function Centered({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex h-[78vh] flex-col items-center justify-center gap-2">
+    <div className="flex h-[70dvh] flex-col items-center justify-center gap-2">
       <Loader2 size={22} className="animate-spin text-primary" />
       <span className="text-small text-foreground/60">{children}</span>
     </div>

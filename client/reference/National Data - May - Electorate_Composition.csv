@@ -1,0 +1,132 @@
+Registered Voters Electorate (weighted),,,
+Variable,Category,Weighted_N,Weighted_%
+Age,18-29,132.4,14.8%
+,30-44,228.6,25.6%
+,45-64,279.2,31.3%
+,65+,252.8,28.3%
+Gender,Male,434.3,48.6%
+,Female,458.7,51.4%
+AgeGender,18-29_Male,67.2,7.5%
+,18-29_Female,65.2,7.3%
+,30-44_Male,110.5,12.4%
+,30-44_Female,118.1,13.2%
+,45-64_Male,138.5,15.5%
+,45-64_Female,140.7,15.8%
+,65+_Male,118.1,13.2%
+,65+_Female,134.7,15.1%
+RaceEdu,White No College,308.8,34.6%
+,White College,323.7,36.3%
+,Hispanic,100.3,11.2%
+,Black,100.0,11.2%
+,Asian / Other,60.3,6.7%
+Education4,High school or less,108.0,12.1%
+,Some college/assoc. degree,308.6,34.6%
+,College graduate,265.1,29.7%
+,Postgraduate study,211.3,23.7%
+Income,$0–$25k,173.3,19.6%
+,$25–$50k,193.4,21.9%
+,$50–$75k,160.3,18.1%
+,$75–$100k,121.2,13.7%
+,$100–$150k,138.1,15.6%
+,$150–$200k,71.9,8.1%
+,$200k+,25.2,2.9%
+Region,New England,43.0,4.8%
+,Mid-Atlantic,136.3,15.3%
+,Southeast Atlantic,141.3,15.8%
+,Appalachia / South Interior,69.0,7.7%
+,Great Lakes,148.8,16.7%
+,Lower Midwest / Plains,51.0,5.7%
+,Southwest,108.7,12.2%
+,West / Mountain / Pacific,195.0,21.8%
+Party,Republican,240.3,26.9%
+,Democrat,255.6,28.6%
+,Independent,397.0,44.5%
+Party_Detailed,America First R,100.5,11.3%
+,Populist / WC R,52.5,5.9%
+,Suburban / Prof R,53.5,6.0%
+,Libertarian R,33.8,3.8%
+,Progressive D,119.6,13.4%
+,Mainline D,60.2,6.7%
+,Working-Class / Union D,54.8,6.1%
+,Coalition / Civil Rights D,21.1,2.4%
+,Lean R Independent,92.5,10.4%
+,Lean D Independent,125.5,14.1%
+,Moderate Independent,103.2,11.6%
+,Anti-Estab. Indep.,27.1,3.0%
+,No Clear Preference,48.7,5.5%
+Vote2024_Bucket,Donald Trump,360.3,40.3%
+,Kamala Harris,354.5,39.7%
+,Third party,12.9,1.4%
+,Did not vote,165.4,18.5%
+VoteHistory,Consistent voter,653.1,73.1%
+,Occasional voter,155.8,17.4%
+,New / non-voter,84.1,9.4%
+Groyper_Bucket,Yes,67.1,7.5%
+,No,825.9,92.5%
+,,,
+,,,
+Likely Voters Electorate (derived; weighted),,,
+Variable,Category,Weighted_N,Weighted_%
+Age,18-29,100.0,11.2%
+,30-44,228.7,25.6%
+,45-64,280.0,31.4%
+,65+,284.3,31.8%
+Gender,Male,451.7,50.6%
+,Female,441.3,49.4%
+AgeGender,18-29_Male,51.6,5.8%
+,18-29_Female,48.4,5.4%
+,30-44_Male,116.6,13.1%
+,30-44_Female,112.1,12.6%
+,45-64_Male,147.5,16.5%
+,45-64_Female,132.5,14.8%
+,65+_Male,136.0,15.2%
+,65+_Female,148.3,16.6%
+RaceEdu,White No College,295.2,33.1%
+,White College,352.9,39.5%
+,Hispanic,88.7,9.9%
+,Black,100.8,11.3%
+,Asian / Other,55.5,6.2%
+Education4,High school or less,73.9,8.3%
+,Some college/assoc. degree,300.6,33.7%
+,College graduate,285.9,32.0%
+,Postgraduate study,232.6,26.0%
+Income,$0–$25k,143.2,16.2%
+,$25–$50k,185.0,20.9%
+,$50–$75k,165.1,18.7%
+,$75–$100k,125.2,14.2%
+,$100–$150k,153.0,17.3%
+,$150–$200k,82.0,9.3%
+,$200k+,29.9,3.4%
+Region,New England,46.5,5.2%
+,Mid-Atlantic,135.9,15.2%
+,Southeast Atlantic,137.0,15.3%
+,Appalachia / South Interior,65.7,7.4%
+,Great Lakes,142.6,16.0%
+,Lower Midwest / Plains,55.7,6.2%
+,Southwest,106.6,11.9%
+,West / Mountain / Pacific,202.9,22.7%
+Party,Republican,252.5,28.3%
+,Democrat,269.6,30.2%
+,Independent,371.0,41.5%
+Party_Detailed,America First R,109.7,12.3%
+,Populist / WC R,56.4,6.3%
+,Suburban / Prof R,53.6,6.0%
+,Libertarian R,32.7,3.7%
+,Progressive D,125.3,14.0%
+,Mainline D,66.1,7.4%
+,Working-Class / Union D,53.1,5.9%
+,Coalition / Civil Rights D,25.0,2.8%
+,Lean R Independent,99.4,11.1%
+,Lean D Independent,124.4,13.9%
+,Moderate Independent,98.8,11.1%
+,Anti-Estab. Indep.,20.5,2.3%
+,No Clear Preference,27.9,3.1%
+Vote2024_Bucket,Donald Trump,391.8,43.9%
+,Kamala Harris,395.9,44.3%
+,Third party,13.8,1.5%
+,Did not vote,91.5,10.2%
+VoteHistory,Consistent voter,749.0,83.9%
+,Occasional voter,112.8,12.6%
+,New / non-voter,31.2,3.5%
+Groyper_Bucket,Yes,69.4,7.8%
+,No,823.6,92.2%

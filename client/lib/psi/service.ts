@@ -6,6 +6,7 @@
 import { autoDetect, buildWeightMap, parseCsv, type ParsedCsv } from "./derive"
 import { runPathway3 } from "./pipeline"
 import { BANNER_DIMS, crosstab as buildCrosstab, demoValue, tabulateQuestion } from "./tabulate"
+import { buildTabbook as assembleTabbook, DEMO_BANNER } from "./tabbook"
 import {
   CPS_DNV_SHARE,
   HISTORY_K,
@@ -19,7 +20,7 @@ import {
   type TargetSet,
 } from "./constants"
 import { runUncertainty, type UncertaintyResult } from "./uncertainty"
-import type { Crosstab, Question } from "../types"
+import type { Crosstab, Question, Tabbook } from "../types"
 import type {
   ColumnMapping,
   Diagnostics,
@@ -152,6 +153,7 @@ export interface ClientPayload {
   mapping: ColumnMapping
   substantiveKeys: string[]
   bannerDims: { key: string; label: string; isDemo: boolean }[]
+  tabbookDims: { key: string; label: string }[] // demographic banner groups for the Tabbook
   quality: QualityReport
   warnings: string[]
   weightingSet: "A" | "B" | "C"
@@ -216,6 +218,7 @@ export function buildClientPayload(full: FullResult): ClientPayload {
     mapping,
     substantiveKeys,
     bannerDims,
+    tabbookDims: DEMO_BANNER.map((d) => ({ key: d.key, label: d.group })),
     quality: result.quality,
     warnings: result.warnings,
     weightingSet,
@@ -264,6 +267,73 @@ export function buildAllCrosstabs(full: FullResult, universe: "RV" | "LV" = "RV"
       } catch {
         /* skip */
       }
+    }
+  }
+  return out
+}
+
+// The full Tabbook for one universe: every question's Total + all banner groups
+// in one wide grid. `banners` defaults to the demographic banner; pass a custom
+// list (e.g. add question columns) to override.
+export function buildTabbook(
+  full: FullResult,
+  universe: "RV" | "LV" = "RV",
+  banners?: { key: string; isDemo: boolean }[],
+): Tabbook {
+  const weights = universe === "RV" ? full.result.rv.weights : full.result.lvUniverse.weights
+  const bs = banners && banners.length ? banners : DEMO_BANNER.map((d) => ({ key: d.key, isDemo: true }))
+  return assembleTabbook(full.parsed.rows, full.result.derived, weights, full.substantiveKeys, universe, full.result.name, bs)
+}
+
+export interface BalanceRow {
+  variable: string // raking dimension label
+  category: string
+  target: number // target %
+  weighted: number // achieved weighted %
+  diff: number // weighted - target (pp)
+  smd: number // standardized mean difference
+  balanced: boolean // |SMD| < 0.10
+}
+
+// Covariate balance after weighting: achieved weighted share vs the raking target
+// per category, with the per-cell SMD. Mirrors the reference Weight Diagnostics
+// "Covariate Balance" section for one universe.
+export function buildBalance(full: FullResult, universe: "RV" | "LV"): BalanceRow[] {
+  const u = universe === "RV" ? full.result.rv : full.result.lvUniverse
+  const weights = u.weights
+  const targets = u.targets
+  const dims: { key: keyof DimensionTargets; label: string }[] = [
+    { key: "ageSex", label: "AgeGender" },
+    { key: "raceEdu", label: "RaceEdu" },
+    { key: "eduSex", label: "GenderEdu" },
+    { key: "region", label: "Region" },
+    { key: "recall2024", label: "Vote2024_Bucket" },
+  ]
+  const cellOf: Record<string, (d: (typeof full.result.derived)[number]) => string> = {
+    ageSex: (d) => d.ageSex,
+    raceEdu: (d) => d.raceEdu,
+    eduSex: (d) => d.eduSex,
+    region: (d) => d.region,
+    recall2024: (d) => d.recall,
+  }
+  const out: BalanceRow[] = []
+  let totalW = 0
+  for (const w of weights) totalW += w
+  for (const { key, label } of dims) {
+    const tgt = targets[key]
+    if (!tgt) continue
+    const achieved: Record<string, number> = {}
+    full.result.derived.forEach((d, i) => {
+      const cell = cellOf[key](d)
+      achieved[cell] = (achieved[cell] || 0) + weights[i]
+    })
+    for (const [cat, t] of Object.entries(tgt)) {
+      const wpct = totalW ? ((achieved[cat] || 0) / totalW) * 100 : 0
+      const diff = wpct - t
+      const p = t / 100
+      const sd = Math.sqrt(p * (1 - p)) * 100 || 1
+      const smd = Math.abs(diff) / sd
+      out.push({ variable: label, category: cat.replace(/ · /g, " "), target: t, weighted: wpct, diff, smd, balanced: smd < 0.1 })
     }
   }
   return out

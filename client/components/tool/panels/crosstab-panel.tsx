@@ -1,43 +1,120 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
-import { Loader2 } from "lucide-react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { Download, Loader2 } from "lucide-react"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { fetchCrosstab, type ClientPayload, type RunConfig } from "@/lib/client-api"
-import type { Crosstab } from "@/lib/types"
+import { fetchExportFile, fetchTabbook, type ClientPayload, type RunConfig } from "@/lib/client-api"
+import { ExportConfirmButton } from "../export-confirm"
+import type { Tabbook } from "@/lib/types"
 
-function CrosstabTable({ ct, label }: { ct: Crosstab; label?: string }) {
+// One wide Tabbook grid: response labels + Total sticky on the left, every banner
+// group to the right. The grouped header, column header and (unweighted n) row
+// are shared (sticky); each question is a labelled block of response rows.
+function TabbookGrid({ tb }: { tb: Tabbook }) {
+  // column index → whether it starts a new banner group (for vertical dividers)
+  const groupStart = useMemo(() => {
+    const starts = new Set<number>()
+    let c = 0
+    for (const g of tb.groups) {
+      starts.add(c)
+      c += g.span
+    }
+    return starts
+  }, [tb.groups])
+
+  const labelCls = "sticky left-0 z-10 bg-background px-2.5 py-1.5 text-left"
+  const cellBorder = (i: number) => (groupStart.has(i) && i !== 0 ? "border-l border-foreground/15" : "")
+  // Opaque equivalent of a translucent foreground tint over the page background.
+  // Sticky cells need a solid fill, or columns scrolled underneath bleed through
+  // them and the text overlaps (e.g. "Total" showing through "Response").
+  const tint = (pct: number) => `color-mix(in srgb, var(--foreground) ${pct}%, var(--background))`
+
   return (
-    <div className="overflow-x-auto rounded-lg border border-foreground/10">
-      {label && <div className="border-b border-foreground/10 bg-foreground/[0.02] px-3 py-1.5 text-tiny font-semibold uppercase tracking-wider text-foreground/55">{label}</div>}
-      <table className="w-full text-small">
+    <div className="max-w-full overflow-auto rounded-lg border border-foreground/10" style={{ maxHeight: "75dvh" }}>
+      <table className="w-max border-collapse text-tiny">
         <thead>
-          <tr className="border-b border-foreground/10 bg-foreground/[0.015] text-tiny font-medium uppercase tracking-wider text-foreground/55">
-            <th className="px-3 py-2 text-left">Option</th>
-            {ct.columns.map((c, i) => (
-              <th key={c} className="px-3 py-2 text-right">
-                {c}
-                <div className="font-mono text-[10px] text-foreground/45">n={Math.round(ct.columnTotals[i] || 0)}</div>
+          {/* grouped banner header */}
+          <tr className="sticky top-0 z-20" style={{ background: tint(4) }}>
+            <th className={`${labelCls} z-30 align-bottom font-semibold text-foreground/70`} style={{ background: tint(4) }}>Response</th>
+            {tb.groups.map((g, gi) => (
+              <th
+                key={`${g.label}-${gi}`}
+                colSpan={g.span}
+                className={`whitespace-nowrap px-2.5 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wide text-foreground/60 ${gi !== 0 ? "border-l border-foreground/15" : ""}`}
+              >
+                {g.label}
               </th>
             ))}
-            <th className="px-3 py-2 text-right">All</th>
+          </tr>
+          {/* column labels */}
+          <tr className="sticky top-[29px] z-20" style={{ background: tint(2) }}>
+            <th className={`${labelCls} z-30`} style={{ background: tint(2) }} />
+            {tb.columns.map((c, i) => (
+              <th
+                key={`${c.groupKey}-${c.value}-${i}`}
+                className={`max-w-[120px] whitespace-nowrap px-2.5 py-1.5 text-right align-bottom font-medium text-foreground/70 ${c.isTotal ? "font-semibold" : ""} ${cellBorder(i)}`}
+                title={c.label}
+              >
+                {c.label}
+              </th>
+            ))}
+          </tr>
+          {/* unweighted n */}
+          <tr className="sticky top-[58px] z-20 border-b border-foreground/15 bg-background text-foreground/45">
+            <th className={`${labelCls} text-[10px] font-normal`}>(unweighted n)</th>
+            {tb.columns.map((c, i) => (
+              <td key={`n-${i}`} className={`px-2.5 py-1 text-right font-mono text-[10px] ${cellBorder(i)}`}>
+                {c.isTotal ? "" : c.unweightedN}
+              </td>
+            ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-foreground/[0.06]">
-          {ct.rows.map((r) => (
-            <tr key={r.label} className="hover:bg-foreground/[0.02]">
-              <td className="max-w-[220px] truncate px-3 py-2 text-foreground/80">{r.label}</td>
-              {r.cells.map((c) => (
-                <td
-                  key={c.col}
-                  className={`px-3 py-2 text-right font-mono tabular-nums ${c.significant ? "font-semibold text-primary" : "text-foreground/75"}`}
-                  title={c.significant ? `±${c.moe.toFixed(1)}% MoE` : undefined}
-                >
-                  {c.pct.toFixed(0)}%
+        <tbody>
+          {tb.questions.map((q) => (
+            <Fragment key={q.key}>
+              <tr className="border-t border-foreground/10" style={{ background: tint(2.5) }}>
+                <td colSpan={tb.columns.length + 1} className="p-0">
+                  {/* Inner sticky element: the full-width <td> gives sticky no room
+                      to pin, so the text would scroll off; a bounded child pins it. */}
+                  <div
+                    className="sticky left-0 z-10 block w-fit max-w-[680px] truncate px-2.5 py-1.5 text-small font-semibold text-foreground/85"
+                    style={{ background: tint(2.5) }}
+                    title={q.prompt}
+                  >
+                    {q.prompt}
+                  </div>
                 </td>
-              ))}
-              <td className="px-3 py-2 text-right font-mono tabular-nums text-foreground/55">{r.all.pct.toFixed(0)}%</td>
-            </tr>
+              </tr>
+              {q.rows.length === 0 ? (
+                <tr>
+                  <td colSpan={tb.columns.length + 1} className="sticky left-0 bg-background px-2.5 py-1.5 text-tiny italic text-foreground/50">
+                    {q.note}
+                  </td>
+                </tr>
+              ) : (
+                q.rows.map((r) => (
+                  <tr key={`${q.key}-${r.label}`} className="border-t border-foreground/[0.06] hover:bg-foreground/[0.02]">
+                    <td className={`${labelCls} max-w-[280px] truncate text-foreground/80`} title={r.label}>
+                      {r.label}
+                    </td>
+                    {r.pct.map((p, i) => (
+                      <td
+                        key={i}
+                        className={`px-2.5 py-1 text-right font-mono tabular-nums ${cellBorder(i)} ${
+                          tb.columns[i].isTotal
+                            ? "bg-primary/[0.05] font-semibold text-foreground/90"
+                            : r.significant[i]
+                              ? "font-semibold text-primary"
+                              : "text-foreground/65"
+                        }`}
+                      >
+                        {p.toFixed(1)}%
+                      </td>
+                    ))}
+                  </tr>
+                ))
+              )}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -46,79 +123,134 @@ function CrosstabTable({ ct, label }: { ct: Crosstab; label?: string }) {
 }
 
 export function CrosstabPanel({ payload, csvText, name, config }: { payload: ClientPayload; csvText: string; name: string; config: RunConfig }) {
-  const crosstabbable = payload.toplines.filter((t) => t.type !== "numeric" && t.type !== "open_ended").map((t) => t.key)
-  const [questionKey, setQuestionKey] = useState(crosstabbable[0] || "")
-  const [bannerKey, setBannerKey] = useState(payload.bannerDims[0]?.key || "")
-  const [universe, setUniverse] = useState<"RV" | "LV" | "both">("RV")
-  const [data, setData] = useState<{ crosstab?: Crosstab; rv?: Crosstab; lv?: Crosstab } | null>(null)
+  const demoDims = payload.tabbookDims
+  const questionBanners = payload.bannerDims.filter((b) => !b.isDemo)
+
+  const [universe, setUniverse] = useState<"RV" | "LV">("RV")
+  const [demoOn, setDemoOn] = useState<Set<string>>(() => new Set(demoDims.map((d) => d.key)))
+  const [qOn, setQOn] = useState<Set<string>>(() => new Set())
+  const [data, setData] = useState<{ rv?: Tabbook; lv?: Tabbook } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const reqId = useRef(0)
 
-  const banner = useMemo(() => payload.bannerDims.find((b) => b.key === bannerKey), [payload.bannerDims, bannerKey])
+  const banners = useMemo(
+    () => [
+      ...demoDims.filter((d) => demoOn.has(d.key)).map((d) => ({ key: d.key, isDemo: true })),
+      ...questionBanners.filter((b) => qOn.has(b.key)).map((b) => ({ key: b.key, isDemo: false })),
+    ],
+    [demoDims, demoOn, questionBanners, qOn],
+  )
+  const bannersKey = JSON.stringify(banners)
 
   useEffect(() => {
-    if (!questionKey || !banner) return
+    if (!banners.length) {
+      setData(null)
+      return
+    }
     const id = ++reqId.current
     setLoading(true)
     setError(null)
-    fetchCrosstab({ csvText, name, ...config, questionKey, banner, universe })
-      .then((d) => id === reqId.current && setData(d))
+    fetchTabbook({ csvText, name, ...config, universe: "both", banners })
+      .then((d) => id === reqId.current && setData({ rv: d.rv, lv: d.lv }))
       .catch((e) => id === reqId.current && setError(e.message))
       .finally(() => id === reqId.current && setLoading(false))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [questionKey, bannerKey, universe])
+  }, [bannersKey])
+
+  const toggle = (set: Set<string>, key: string, setter: (s: Set<string>) => void) => {
+    const next = new Set(set)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    setter(next)
+  }
+
+  const tb = universe === "RV" ? data?.rv : data?.lv
 
   return (
     <Card>
-      <CardHeader title="Crosstab builder" hint="Banner × stub with 95%-CI significance flagging in either universe" />
+      <CardHeader
+        title="Tabbook"
+        hint="Every question's Total on the left, all crosstab banners to the right — one universe at a time"
+        action={
+          <ExportConfirmButton
+            variant="compact"
+            label={`${universe} CSV`}
+            icon={Download}
+            title={`Preview the ${universe} tabbook CSV, then confirm to download`}
+            disabled={!tb}
+            fetchFile={() => fetchExportFile({ csvText, name, ...config, format: universe === "RV" ? "tabbook-rv" : "tabbook-lv", banners })}
+          />
+        }
+      />
       <CardBody className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2 text-small">
-          <select value={questionKey} onChange={(e) => setQuestionKey(e.target.value)} title="The survey question to break down" className="h-9 max-w-[300px] truncate rounded-md border border-foreground/15 bg-background px-2 text-small outline-none focus:border-primary/50">
-            {crosstabbable.map((k) => (
-              <option key={k} value={k}>
-                {k.length > 48 ? k.slice(0, 47) + "…" : k}
-              </option>
-            ))}
-          </select>
-          <span className="text-foreground/50">by</span>
-          <select value={bannerKey} onChange={(e) => setBannerKey(e.target.value)} title="The demographic (or another question) to break the results down by" className="h-9 max-w-[220px] truncate rounded-md border border-foreground/15 bg-background px-2 text-small outline-none focus:border-primary/50">
-            {payload.bannerDims.map((b) => (
-              <option key={b.key} value={b.key}>
-                {b.label}
-              </option>
-            ))}
-          </select>
-          <div className="ml-auto flex items-center gap-1 rounded-md border border-foreground/10 bg-foreground/[0.02] p-0.5" title="Show the crosstab for Registered Voters, Likely Voters, or both side by side.">
-            {(["RV", "LV", "both"] as const).map((u) => (
+          <div className="flex items-center gap-1 rounded-md border border-foreground/10 bg-foreground/[0.02] p-0.5" title="Registered Voters or Likely Voters">
+            {(["RV", "LV"] as const).map((u) => (
               <button
                 key={u}
                 onClick={() => setUniverse(u)}
-                title={u === "RV" ? "Registered Voters" : u === "LV" ? "Likely Voters" : "Both universes"}
-                className={`h-7 rounded px-2.5 text-tiny font-medium ${universe === u ? "bg-background text-foreground shadow-sm" : "text-foreground/60 hover:text-foreground"}`}
+                title={u === "RV" ? "Registered Voters" : "Likely Voters"}
+                className={`h-7 rounded px-3 text-tiny font-medium ${universe === u ? "bg-background text-foreground shadow-sm" : "text-foreground/60 hover:text-foreground"}`}
               >
-                {u === "both" ? "Both" : u}
+                {u}
               </button>
             ))}
           </div>
+          <span className="text-tiny text-foreground/45">Banner columns:</span>
+          {demoDims.map((d) => {
+            const on = demoOn.has(d.key)
+            return (
+              <button
+                key={d.key}
+                onClick={() => toggle(demoOn, d.key, setDemoOn)}
+                className={`h-7 rounded-full border px-2.5 text-tiny font-medium transition-colors ${
+                  on ? "border-primary/30 bg-primary/[0.08] text-primary" : "border-foreground/15 text-foreground/55 hover:bg-foreground/5"
+                }`}
+              >
+                {d.label}
+              </button>
+            )
+          })}
         </div>
 
-        <div className="text-tiny text-foreground/45">Bold cells diverge from the row average beyond the 95% confidence interval.</div>
+        {questionBanners.length > 0 && (
+          <details className="rounded-md border border-foreground/10 bg-foreground/[0.015] px-3 py-2">
+            <summary className="cursor-pointer select-none text-tiny font-medium text-foreground/60">
+              Add survey questions as banner columns ({qOn.size} on)
+            </summary>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {questionBanners.map((b) => {
+                const on = qOn.has(b.key)
+                return (
+                  <button
+                    key={b.key}
+                    onClick={() => toggle(qOn, b.key, setQOn)}
+                    title={b.key}
+                    className={`h-7 max-w-[220px] truncate rounded-full border px-2.5 text-tiny font-medium transition-colors ${
+                      on ? "border-primary/30 bg-primary/[0.08] text-primary" : "border-foreground/15 text-foreground/55 hover:bg-foreground/5"
+                    }`}
+                  >
+                    {b.label}
+                  </button>
+                )
+              })}
+            </div>
+          </details>
+        )}
+
+        <div className="text-tiny text-foreground/45">
+          Each cell is the column-% within that group. <span className="font-semibold text-primary">Bold colored</span> cells diverge from the Total beyond the 95% confidence interval. The Total column is shaded.
+        </div>
 
         {error && <div className="rounded-md border border-rose-500/30 bg-rose-500/[0.06] px-3 py-2 text-tiny text-rose-700 dark:text-rose-300">{error}</div>}
         {loading && (
           <div className="flex items-center gap-2 py-6 text-small text-foreground/55">
-            <Loader2 size={14} className="animate-spin text-primary" /> Building crosstab…
+            <Loader2 size={14} className="animate-spin text-primary" /> Building tabbook…
           </div>
         )}
-
-        {!loading && data && (
-          <div className="flex flex-col gap-3">
-            {data.crosstab && <CrosstabTable ct={data.crosstab} />}
-            {data.rv && <CrosstabTable ct={data.rv} label="Registered voters" />}
-            {data.lv && <CrosstabTable ct={data.lv} label="Likely voters" />}
-          </div>
-        )}
+        {!loading && !banners.length && <div className="py-6 text-small text-foreground/55">Select at least one banner column.</div>}
+        {!loading && tb && <TabbookGrid tb={tb} />}
       </CardBody>
     </Card>
   )
