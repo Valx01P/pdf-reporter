@@ -5,6 +5,7 @@ import { Download, Loader2 } from "lucide-react"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
 import { fetchExportFile, fetchTabbook, type ClientPayload, type RunConfig } from "@/lib/client-api"
 import { ExportConfirmButton } from "../export-confirm"
+import { formatSummaryValue } from "@/lib/tabbook-format"
 import type { Tabbook } from "@/lib/types"
 
 // One wide Tabbook grid: response labels + Total sticky on the left, every banner
@@ -108,12 +109,29 @@ function TabbookGrid({ tb }: { tb: Tabbook }) {
                               : "text-foreground/65"
                         }`}
                       >
-                        {p.toFixed(1)}%
+                        {q.valueFormat === "rank" ? p.toFixed(2) : `${p.toFixed(1)}%`}
                       </td>
                     ))}
                   </tr>
                 ))
               )}
+              {q.summary?.map((s) => (
+                <tr key={`${q.key}-sum-${s.label}`} className={`border-t border-foreground/15 ${s.emphasis ? "font-semibold" : ""}`}>
+                  <td className={`${labelCls} max-w-[280px] truncate ${s.emphasis ? "text-foreground/90" : "text-foreground/65"}`} title={s.label}>
+                    {s.label}
+                  </td>
+                  {s.values.map((v, i) => (
+                    <td
+                      key={i}
+                      className={`px-2.5 py-1 text-right font-mono tabular-nums ${cellBorder(i)} ${
+                        tb.columns[i].isTotal ? "bg-primary/[0.05] font-semibold text-foreground/90" : s.emphasis ? "text-foreground/85" : "text-foreground/65"
+                      }`}
+                    >
+                      {formatSummaryValue(v, s.format)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
             </Fragment>
           ))}
         </tbody>

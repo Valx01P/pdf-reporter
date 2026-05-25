@@ -5,6 +5,7 @@ import ExcelJS from "exceljs"
 import type { Crosstab, Tabbook } from "./types"
 import type { BalanceRow, ClientPayload, FullResult } from "./psi/service"
 import { bannerGroupLabel } from "./psi/tabbook"
+import { formatSummaryValue } from "./tabbook-format"
 
 function esc(v: string | number): string {
   const s = String(v)
@@ -39,9 +40,10 @@ export function buildTabbookCsv(tb: Tabbook): string {
       lines.push([q.note || "—"].concat(new Array(ncol - 1).fill("")).map(esc).join(","))
     } else {
       for (const r of q.rows) {
-        lines.push([r.label, ...r.pct.map((p) => pct1(p))].map(esc).join(","))
+        lines.push([r.label, ...r.pct.map((p) => (q.valueFormat === "rank" ? p.toFixed(2) : pct1(p)))].map(esc).join(","))
       }
     }
+    if (q.summary) for (const s of q.summary) lines.push([s.label, ...s.values.map((v) => formatSummaryValue(v, s.format))].map(esc).join(","))
     lines.push(blank, blank, blank)
   }
   return lines.join("\n")
@@ -63,7 +65,11 @@ export function buildDiagnosticsCsv(p: ClientPayload, rvBalance: BalanceRow[], l
   row(["margin_of_error", `±${rv.moe}%`, `±${lv.moe}%`, "95% CI at p=0.5, DEFF-adjusted"])
   row(["weight_min", rv.weightMin, lv.weightMin, "Smallest individual weight"])
   row(["weight_mean", rv.weightMean, lv.weightMean, "Normalised to 1"])
+  row(["weight_median", rv.weightMedian ?? "—", lv.weightMedian ?? "—", "Median weight"])
   row(["weight_max", rv.weightMax, lv.weightMax, "Largest individual weight"])
+  row(["weight_p99", rv.weightP99 ?? "—", lv.weightP99 ?? "—", "99th-percentile weight (trim cap)"])
+  row(["pct_weight_gt2", rv.pctGt2 ?? "—", lv.pctGt2 ?? "—", "% of weights above 2x the mean"])
+  row(["pct_weight_gt3", rv.pctGt3 ?? "—", lv.pctGt3 ?? "—", "% of weights above 3x the mean"])
   row([])
   row([])
 
@@ -181,10 +187,19 @@ function addTabbookSheet(wb: ExcelJS.Workbook, label: string, tb: Tabbook) {
       ws.addRow([q.note || "—"])
     } else {
       for (const r of q.rows) {
-        const xr = ws.addRow([r.label, ...r.pct.map((v) => Number(v.toFixed(1)))])
+        const xr = ws.addRow([r.label, ...r.pct.map((v) => Number(v.toFixed(q.valueFormat === "rank" ? 2 : 1)))])
         r.significant.forEach((sig, i) => {
           if (sig) xr.getCell(i + 2).font = { bold: true }
         })
+      }
+    }
+    if (q.summary) {
+      for (const s of q.summary) {
+        // Keep pct/net as numeric cells (consistent with the option rows above);
+        // only the horse-race margin ("D+8.4") is inherently a label.
+        const cells = s.values.map((v) => (s.format === "margin" ? formatSummaryValue(v, s.format) : Number(v.toFixed(1))))
+        const sr = ws.addRow([s.label, ...cells])
+        if (s.emphasis) sr.font = { bold: true }
       }
     }
     ws.addRow([])

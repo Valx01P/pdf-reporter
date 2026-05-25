@@ -45,6 +45,8 @@ export interface RunConfig {
   q5Map?: Record<string, number>
   baseTargets?: TargetSet
   cpsDnv?: number
+  // When set, RV/LV are raked to these user variables + targets instead of Set A/B/C.
+  customWeighting?: { key: string; label?: string; isDemo: boolean; targets: Record<string, number> }[]
 }
 
 export interface FullResult {
@@ -59,6 +61,7 @@ export interface FullResult {
   weightingSet: "A" | "B" | "C"
   baseTargets: TargetSet
   cpsDnv: number
+  customWeighting?: RunConfig["customWeighting"]
   result: PipelineResult
 }
 
@@ -95,9 +98,10 @@ export function runAnalysis(csvText: string, config: RunConfig): FullResult {
     baseTargets,
     weightingSet,
     cpsDnv: config.cpsDnv,
+    customWeighting: config.customWeighting,
   })
 
-  return { parsed, mapping, substantiveKeys, q3Map, q4Map, q5Map, projectedTurnout, k, weightingSet, baseTargets, cpsDnv: config.cpsDnv ?? CPS_DNV_SHARE, result }
+  return { parsed, mapping, substantiveKeys, q3Map, q4Map, q5Map, projectedTurnout, k, weightingSet, baseTargets, cpsDnv: config.cpsDnv ?? CPS_DNV_SHARE, customWeighting: config.customWeighting, result }
 }
 
 export function buildUncertainty(full: FullResult, bootstrap?: number): UncertaintyResult {
@@ -116,6 +120,7 @@ export function buildUncertainty(full: FullResult, bootstrap?: number): Uncertai
       baseLvTargets: r.lvUniverse.targets,
       lvPvote: r.lv.pvote,
       cpsDnv: full.cpsDnv,
+      customWeighting: full.customWeighting,
     },
     { bootstrap },
   )
@@ -154,6 +159,8 @@ export interface ClientPayload {
   substantiveKeys: string[]
   bannerDims: { key: string; label: string; isDemo: boolean }[]
   tabbookDims: { key: string; label: string }[] // demographic banner groups for the Tabbook
+  // Variables the user can weight on, with observed % per category (UI prefill).
+  weightingVariables: { key: string; label: string; isDemo: boolean; categories: { value: string; label: string; pct: number }[] }[]
   quality: QualityReport
   warnings: string[]
   weightingSet: "A" | "B" | "C"
@@ -179,15 +186,22 @@ export function buildClientPayload(full: FullResult): ClientPayload {
   const { parsed, mapping, substantiveKeys, result, weightingSet } = full
   const { raw, pvote, ...model } = result.lv
 
+  // A demographic dim is shown only when the CSV actually populated it, so
+  // Income/Party collapse away on datasets that lack those columns.
+  const populated = (key: string) => result.derived.some((d) => {
+    const v = demoValue(d, key)
+    return v !== "" && v !== "Unknown"
+  })
+
   // Banner dims: demographic dimensions + the substantive questions themselves.
   const bannerDims = [
-    ...BANNER_DIMS.map((d) => ({ key: d.key, label: d.label, isDemo: true })),
+    ...BANNER_DIMS.filter((d) => populated(d.key)).map((d) => ({ key: d.key, label: d.label, isDemo: true })),
     ...substantiveKeys.map((k) => ({ key: k, label: shorten(k), isDemo: false })),
   ]
 
   // Sample composition per demographic banner (unweighted vs RV vs LV).
   const unit = new Array(result.derived.length).fill(1)
-  const composition = BANNER_DIMS.map((d) => {
+  const composition = BANNER_DIMS.filter((d) => populated(d.key)).map((d) => {
     const tally = (w: number[]) => {
       const s: Record<string, number> = {}
       let t = 0
@@ -212,13 +226,54 @@ export function buildClientPayload(full: FullResult): ClientPayload {
     return { key: d.key, label: d.label, values }
   })
 
+  // Weighting variables for the custom-weighting UI: populated demographics +
+  // categorical survey columns (2–12 distinct answers), each with observed %.
+  const r1 = (x: number) => Math.round(x * 10) / 10
+  const demoVars = composition.map((c) => ({
+    key: c.key,
+    label: c.label,
+    isDemo: true,
+    categories: c.values.map((v) => ({ value: v.value, label: v.value, pct: r1(v.unweighted) })),
+  }))
+  const surveyVars = substantiveKeys
+    .map((key) => {
+      const counts = new Map<string, number>()
+      let answered = 0
+      for (const d of result.derived) {
+        const v = (parsed.rows[d.i][key] ?? "").trim()
+        if (!v) continue
+        counts.set(v, (counts.get(v) || 0) + 1)
+        answered++
+      }
+      return { key, counts, answered }
+    })
+    // Keep real questions, drop indicator columns: 2–12 categories, answered by
+    // ≥half the sample, and no single value dominating ≥95% (DMA / language 0/1
+    // flags are ~99% one value; lopsided real questions like Groyper stay).
+    .filter((s) => {
+      if (s.counts.size < 2 || s.counts.size > 12) return false
+      if (s.answered < result.derived.length * 0.5) return false
+      const top = Math.max(...s.counts.values())
+      return top / s.answered < 0.95
+    })
+    .map((s) => ({
+      key: s.key,
+      label: shorten(s.key),
+      isDemo: false,
+      categories: Array.from(s.counts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([value, c]) => ({ value, label: value, pct: r1((c / s.answered) * 100) })),
+    }))
+  const weightingVariables = [...demoVars, ...surveyVars]
+
   return {
     name: result.name,
     headers: parsed.headers,
     mapping,
     substantiveKeys,
     bannerDims,
-    tabbookDims: DEMO_BANNER.map((d) => ({ key: d.key, label: d.group })),
+    tabbookDims: DEMO_BANNER.filter((d) => populated(d.key)).map((d) => ({ key: d.key, label: d.group })),
+    weightingVariables,
     quality: result.quality,
     warnings: result.warnings,
     weightingSet,

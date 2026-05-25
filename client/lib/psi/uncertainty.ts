@@ -16,7 +16,8 @@ import { scoreLv } from "./lv"
 import { applyLvAdjustments } from "./socal"
 import { entropyBalance } from "./entropy"
 import { rake, recallCalibrate } from "./rake"
-import { tabulateQuestion } from "./tabulate"
+import { rakeCustom, type CustomVariable } from "./custom-weight"
+import { demoValue, tabulateQuestion } from "./tabulate"
 
 export interface UncertaintyOption {
   label: string
@@ -48,6 +49,9 @@ export interface Ctx {
   baseLvTargets: DimensionTargets // SOCAL LV targets (+ ageEdu for Set B)
   lvPvote: number[] // base P(vote) per respondent
   cpsDnv: number | null
+  // When set, the run used custom weighting: bootstrap re-rakes these variables
+  // and the SOCAL 9-scenario Monte Carlo is skipped (it doesn't apply).
+  customWeighting?: { key: string; label?: string; isDemo: boolean; targets: Record<string, number> }[]
 }
 
 const TARGET_SETS = ["midterm-prior", "pvote-derived", "socal-composite"] as const
@@ -136,18 +140,31 @@ export function runUncertainty(ctx: Ctx, opts: { bootstrap?: number } = {}): Unc
     return t !== "numeric" && t !== "open_ended"
   })
 
-  // Base estimates
+  // Base estimates (these always use the actual run weights — custom or default).
   const baseRv = new Map(crosstabbable.map((k) => [k, optionPct(rows, derived, ctx.rvWeights, k)]))
   const baseLv = new Map(crosstabbable.map((k) => [k, optionPct(rows, derived, ctx.lvWeights, k)]))
 
-  // ── Monte Carlo 9-scenario grid ──
+  // Under custom weighting the bootstrap re-rakes the user's variables and the
+  // SOCAL turnout Monte-Carlo grid is skipped (it would rake to the wrong targets).
+  const customVars: CustomVariable[] | null =
+    ctx.customWeighting && ctx.customWeighting.length
+      ? ctx.customWeighting.map((v) => ({
+          key: v.key,
+          label: v.label || v.key,
+          isDemo: v.isDemo,
+          cellByResp: derived.map((d) => (v.isDemo ? demoValue(d, v.key) : (rows[d.i][v.key] ?? "").trim() || "(blank)")),
+          target: v.targets,
+        }))
+      : null
+
+  // ── Monte Carlo 9-scenario grid (skipped under custom weighting) ──
   const turnouts = [TURNOUT_GRID.low, TURNOUT_GRID.base, TURNOUT_GRID.high]
   const scenarios: UncertaintyResult["scenarios"] = []
   // envelope[key][label] -> {min,max}
   const env = new Map<string, Map<string, { min: number; max: number }>>()
   for (const k of crosstabbable) env.set(k, new Map())
 
-  for (const voters of turnouts) {
+  if (!customVars) for (const voters of turnouts) {
     for (const setId of TARGET_SETS) {
       const { weights, meanPvote } = lvWeightsForScenario(ctx, voters, setId)
       scenarios.push({ turnout: voters, targetSet: setId, meanPvote: Math.round(meanPvote * 1000) / 1000 })
@@ -179,11 +196,19 @@ export function runUncertainty(ctx: Ctx, opts: { bootstrap?: number } = {}): Unc
   for (let b = 0; b < B; b++) {
     const counts = new Array(n).fill(0)
     for (let j = 0; j < n; j++) counts[Math.floor(rng() * n)]++
-    // RV resample: rake from bootstrap counts
-    const rvW = recallCalibrate(rake(derived, ctx.baseRvTargets, rvDims, { init: counts }).weights, derived, { dnvAnchor: ctx.cpsDnv }).weights
-    // LV resample: counts × P(vote)
     const lvInit = counts.map((c, i) => c * ctx.lvPvote[i])
-    const lvW = recallCalibrate(rake(derived, ctx.baseLvTargets, lvDims, { init: lvInit }).weights, derived, { dnvAnchor: null }).weights
+    let rvW: number[]
+    let lvW: number[]
+    if (customVars) {
+      // Re-rake the user's custom variables on the resample (RV from counts, LV
+      // P(vote)-seeded) — same weighting the run actually used.
+      rvW = rakeCustom(customVars, counts).weights
+      lvW = rakeCustom(customVars, lvInit).weights
+    } else {
+      // RV resample: rake from bootstrap counts. LV resample: counts × P(vote).
+      rvW = recallCalibrate(rake(derived, ctx.baseRvTargets, rvDims, { init: counts }).weights, derived, { dnvAnchor: ctx.cpsDnv }).weights
+      lvW = recallCalibrate(rake(derived, ctx.baseLvTargets, lvDims, { init: lvInit }).weights, derived, { dnvAnchor: null }).weights
+    }
     for (const k of crosstabbable) {
       const rvPct = optionPct(rows, derived, rvW, k)
       const lvPct = optionPct(rows, derived, lvW, k)
@@ -214,14 +239,19 @@ export function runUncertainty(ctx: Ctx, opts: { bootstrap?: number } = {}): Unc
     const options: UncertaintyOption[] = labels.map((label) => {
       const e = envM.get(label) || { min: baseLv.get(k)!.get(label) ?? 0, max: baseLv.get(k)!.get(label) ?? 0 }
       const a = accM.get(label) || { rvS: 0, rvSq: 0, lvS: 0, lvSq: 0 }
+      const lvVal = baseLv.get(k)!.get(label) ?? 0
+      const lvSeVal = se(a.lvS, a.lvSq)
+      // Custom weighting has no scenario grid: derive a 90% band from the bootstrap SE.
+      const lvLow = customVars ? Math.max(0, lvVal - 1.645 * lvSeVal) : e.min
+      const lvHigh = customVars ? Math.min(100, lvVal + 1.645 * lvSeVal) : e.max
       return {
         label,
         rv: round1(baseRv.get(k)!.get(label) ?? 0),
-        lv: round1(baseLv.get(k)!.get(label) ?? 0),
-        lvLow: round1(e.min),
-        lvHigh: round1(e.max),
+        lv: round1(lvVal),
+        lvLow: round1(lvLow),
+        lvHigh: round1(lvHigh),
         rvSe: round1(se(a.rvS, a.rvSq)),
-        lvSe: round1(se(a.lvS, a.lvSq)),
+        lvSe: round1(lvSeVal),
       }
     })
     return { key: k, prompt: k, options }

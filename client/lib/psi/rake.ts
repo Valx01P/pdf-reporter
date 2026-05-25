@@ -1,8 +1,8 @@
-// Phases 3a/3b — the Wisconsin raking pipeline: cell-collapse safeguard, a
-// 4-round IPF rake with a DEFF-informed weight cap, two-stage recall
-// calibration, and the weighted diagnostics (DEFF, Kish effective N, SMD).
-// Entropy-balancing initialization is a documented hardening-pass item; v1
-// initializes from uniform (RV) or normalized P(vote) (LV).
+// Phases 3a/3b — the Wisconsin raking pipeline: cell-collapse safeguard, an
+// uncapped sequential IPF rake iterated to convergence (matching usmay.py),
+// two-stage recall calibration with a 99th-percentile trim, and the weighted
+// diagnostics (DEFF, Kish effective N, SMD). Initializes from uniform (RV) or
+// normalized P(vote) (LV).
 
 import type { ConvergenceRound, DerivedRespondent, Diagnostics, DimensionTargets, RakeLog } from "./types"
 import { FEC_2024, CPS_DNV_SHARE } from "./constants"
@@ -115,9 +115,15 @@ export function rake(
   const dims = activeDims.map((dim) => ({ dim, ...prepareDimension(derived, dim, targets[dim] ?? {}, collapses) }))
 
   const rounds: ConvergenceRound[] = []
-  let cap: number | null = null
+  // Uncapped sequential IPF, matching usmay.py: rake to all dimension targets
+  // each round and iterate until the marginals settle (no per-round weight cap —
+  // extreme weights are controlled afterward by the 99th-pct trim in recall
+  // calibration). Empty target cells are folded in by the collapse step above.
+  const MAX_ROUNDS = 50
+  let prevDev: number | null = null
+  let stalls = 0
 
-  for (let round = 1; round <= 4; round++) {
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
     for (const { cellByResp, target } of dims) {
       const sums: Record<string, number> = {}
       let total = 0
@@ -135,13 +141,6 @@ export function rake(
       weights = normalizeMean1(weights)
     }
 
-    const d = deff(weights)
-    if (round === 1) cap = d < 2.5 ? 1.75 : 2.0
-    if (cap != null) {
-      weights = weights.map((w) => Math.min(w, cap as number))
-      weights = normalizeMean1(weights)
-    }
-
     // max cell deviation across all dims (in share)
     let maxDev = 0
     for (const { cellByResp, target } of dims) {
@@ -156,8 +155,16 @@ export function rake(
         maxDev = Math.max(maxDev, Math.abs(obs - target[cell]))
       }
     }
-    rounds.push({ round, maxDeviation: maxDev, deff: d, cap })
+    rounds.push({ round, maxDeviation: maxDev, deff: deff(weights), cap: null })
     if (maxDev < 1e-4) break
+    // Stop only after two consecutive rounds with no meaningful improvement — IPF
+    // plateaus above the strict tolerance when joint margins (e.g. Age×Sex and
+    // Edu×Sex) are mutually inconsistent; the stall counter avoids halting a still-
+    // converging rake on a single small step.
+    if (prevDev !== null && prevDev - maxDev < 1e-5) {
+      if (++stalls >= 2) break
+    } else stalls = 0
+    prevDev = maxDev
   }
 
   return { weights, log: { rounds, collapses } }
@@ -255,6 +262,12 @@ export function diagnostics(weights: number[], derived: DerivedRespondent[], tar
     return { dimension: dim, maxSmd, balanced: maxSmd < 0.1 }
   })
 
+  const sorted = [...weights].sort((a, b) => a - b)
+  const median = n ? sorted[Math.floor(n / 2)] : 0
+  const p99 = n ? sorted[Math.min(n - 1, Math.floor(n * 0.99))] : 0
+  const gt2 = n ? (weights.filter((w) => w > 2).length / n) * 100 : 0
+  const gt3 = n ? (weights.filter((w) => w > 3).length / n) * 100 : 0
+
   return {
     n,
     effectiveN: Math.round(effN),
@@ -264,6 +277,10 @@ export function diagnostics(weights: number[], derived: DerivedRespondent[], tar
     weightMin: round2(Math.min(...weights)),
     weightMax: round2(Math.max(...weights)),
     weightMean: round2(sum / n),
+    weightMedian: round2(median),
+    weightP99: round2(p99),
+    pctGt2: round1(gt2),
+    pctGt3: round1(gt3),
     smd: smd.map((s) => ({ ...s, maxSmd: round2(s.maxSmd) })),
   }
 }

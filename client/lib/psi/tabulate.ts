@@ -14,9 +14,12 @@ const round1 = (x: number) => Math.round(x * 10) / 10
 export const BANNER_DIMS = [
   { key: "ageBucket", label: "Age" },
   { key: "sex", label: "Sex" },
+  { key: "ageSex", label: "Age × Sex" },
   { key: "edu", label: "Education" },
   { key: "raceEdu", label: "Race × Education" },
+  { key: "income", label: "Income" },
   { key: "region", label: "Region" },
+  { key: "party", label: "Party" },
   { key: "recall", label: "2024 recall" },
   { key: "historyBucket", label: "Vote history" },
 ] as const

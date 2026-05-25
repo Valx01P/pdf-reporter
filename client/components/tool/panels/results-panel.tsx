@@ -26,6 +26,9 @@ export function ResultsPanel({ payload, csvText, name, config }: { payload: Clie
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [csvText, cfgKey])
 
+  // No Monte-Carlo scenarios ⇒ custom weighting (band comes from the bootstrap SE).
+  const customUnc = !!unc && unc.scenarios.length === 0
+
   return (
     <div className="flex flex-col gap-4">
       {recall && (
@@ -69,7 +72,7 @@ export function ResultsPanel({ payload, csvText, name, config }: { payload: Clie
       <Card>
         <CardHeader
           title="Likely-voter uncertainty"
-          hint="9-scenario Monte Carlo envelope (3 turnouts × 3 target sets) + bootstrap standard errors"
+          hint={customUnc ? "Bootstrap standard errors + 90% band — turnout Monte-Carlo scenarios don't apply under custom weighting" : "9-scenario Monte Carlo envelope (3 turnouts × 3 target sets) + bootstrap standard errors"}
           action={uncLoading ? <Loader2 size={14} className="animate-spin text-primary" /> : <Activity size={14} className="text-foreground/40" />}
         />
         <CardBody>
@@ -79,11 +82,17 @@ export function ResultsPanel({ payload, csvText, name, config }: { payload: Clie
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap gap-2 text-tiny text-foreground/55">
                 <span className="rounded-md bg-foreground/[0.04] px-2 py-1">Envelope ±{unc.envelopePp} pp</span>
-                <span className="rounded-md bg-foreground/[0.04] px-2 py-1">{unc.scenarios.length} scenarios</span>
+                {customUnc ? (
+                  <span className="rounded-md bg-foreground/[0.04] px-2 py-1">custom weighting</span>
+                ) : (
+                  <span className="rounded-md bg-foreground/[0.04] px-2 py-1">{unc.scenarios.length} scenarios</span>
+                )}
                 <span className="rounded-md bg-foreground/[0.04] px-2 py-1">{unc.bootstrapB} bootstrap resamples</span>
-                <span className="rounded-md bg-foreground/[0.04] px-2 py-1">
-                  turnout {[...new Set(unc.scenarios.map((s) => Math.round(s.meanPvote * 100)))].sort((a, b) => a - b).join(" / ")}%
-                </span>
+                {!customUnc && (
+                  <span className="rounded-md bg-foreground/[0.04] px-2 py-1">
+                    turnout {[...new Set(unc.scenarios.map((s) => Math.round(s.meanPvote * 100)))].sort((a, b) => a - b).join(" / ")}%
+                  </span>
+                )}
               </div>
               <div className="flex flex-col gap-4">
                 {unc.questions.map((q) => (
@@ -96,7 +105,7 @@ export function ResultsPanel({ payload, csvText, name, config }: { payload: Clie
                             <th className="text-left font-medium">Option</th>
                             <th className="text-right font-medium">RV % ± SE</th>
                             <th className="text-right font-medium text-primary">LV % ± SE</th>
-                            <th className="text-right font-medium">90% MC range (LV)</th>
+                            <th className="text-right font-medium">{customUnc ? "90% band (LV)" : "90% MC range (LV)"}</th>
                           </tr>
                         </thead>
                         <tbody className="font-mono tabular-nums">

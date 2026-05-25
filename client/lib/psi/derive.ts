@@ -81,12 +81,15 @@ const HEADER_HINTS: { field: keyof ColumnMapping; re: RegExp }[] = [
   { field: "q4", re: /(^|[^a-z])q?\.?\s*4([^0-9]|$)|how.*(will|do) you (plan to )?vote|polling location|prepared/i },
   { field: "q5", re: /(^|[^a-z])q?\.?\s*5([^0-9]|$)|closest to you|people.*plan to vote|social/i },
   { field: "age", re: /^(age|age_?years?|respondent_?age|exact_?age)$/i },
-  { field: "sex", re: /^(sex|gender|gender_?identity)$/i },
-  { field: "education", re: /^(education|educ|edu|education_?level|edu_?level)$/i },
-  { field: "race", re: /^(race|ethnicity|race_?ethnicity|ethnic)$/i },
+  { field: "sex", re: /^(sex|gender|gender_?identity|demo_?gender)$/i },
+  { field: "education", re: /^(education|educ|edu|education_?level|edu_?level|demo_?education)$/i },
+  // DEMO_Ethnicity carries the Hispanic category and (being earlier in the file)
+  // wins over DEMO_Race, which lacks it — so race/ethnicity classify correctly.
+  { field: "race", re: /^(race|ethnicity|race_?ethnicity|ethnic|demo_?ethnicity|demo_?race)$/i },
   { field: "region", re: /^(region|census_?region|area)$/i },
-  { field: "state", re: /^(state|st|state_?code|state_?abbr)$/i },
-  { field: "income", re: /^(income|hh_?income|household_?income|income_?band)$/i },
+  { field: "state", re: /^(state|st|state_?code|state_?abbr|demo_?state|us_?state)$/i },
+  { field: "income", re: /^(income|hh_?income|household_?income|income_?band|demo_?income)$/i },
+  { field: "party", re: /^(party|party_?id|q9_?partyid|party_?identification|political_?party)$/i },
   { field: "recall2024", re: /(2024|vote2024).*(vote|recall|choice|who)|who.*2024|presidential.*2024|recall/i },
 ]
 
@@ -180,19 +183,76 @@ function raceEduOf(raceRaw: string, bin: "College" | "No College"): string {
   return "Asian/Other"
 }
 
+// Full-name region labels (e.g. usmay.py's NATIONAL_REGIONS) that don't
+// norm-match a REGION8 key, mapped to their REGION8 equivalent.
+const REGION_ALIAS: Record<string, string> = {
+  "new england": "Northeast",
+  "west mountain pacific": "West",
+  "appalachia south interior": "Appalachia",
+}
+
 function regionOf(row: Record<string, string>, mapping: ColumnMapping): string {
-  // explicit region column already in the 8-region vocabulary?
+  // explicit region column — match the 8-region vocabulary directly or via alias
   if (mapping.region) {
-    const r = (row[mapping.region] ?? "").trim()
-    const match = REGION8.find((reg) => norm(reg) === norm(r))
-    if (match) return match
+    const r = norm(row[mapping.region] ?? "")
+    if (r) {
+      const match = REGION8.find((reg) => norm(reg) === r)
+      if (match) return match
+      if (REGION_ALIAS[r]) return REGION_ALIAS[r]
+    }
   }
-  const st = mapping.state ? (row[mapping.state] ?? "").trim() : mapping.region ? (row[mapping.region] ?? "").trim() : ""
-  if (st) {
-    const code = st.length === 2 ? st.toUpperCase() : STATE_NAME_TO_CODE[norm(st)] || ""
+  // state column — full name ("California"), "Illinois (US-IL)", or 2-letter code.
+  // Fall back to the region column's value (when no state column) so a region
+  // field that actually holds state names/codes still resolves instead of "West".
+  const stRaw = mapping.state ? (row[mapping.state] ?? "").trim() : mapping.region ? (row[mapping.region] ?? "").trim() : ""
+  if (stRaw) {
+    const s = stRaw.split("(")[0].trim()
+    const code = s.length === 2 ? s.toUpperCase() : STATE_NAME_TO_CODE[norm(s)] || ""
     if (code && STATE_TO_REGION[code]) return STATE_TO_REGION[code]
   }
   return "West" // default bucket; flagged via SMD if it distorts
+}
+
+// 7-band income brackets, in display order (matches the Wisconsin tabbook).
+export const INCOME_BANDS = ["$0–$25k", "$25–$50k", "$50–$75k", "$75–$100k", "$100–$150k", "$150–$200k", "$200k+"]
+
+// Map a raw income string to a band. Handles full strings ("$100,000 to
+// $124,999", "Less than $5,000"), shorthand ("$250k", "$1 million +"), and
+// values that are already a canonical band (re-fed pre-binned data). Prefers the
+// first amount after a "$" so a leading band index ("2 - $30,000") isn't read as
+// the income. Returns "" when no amount is present.
+function incomeBand(raw: string): string {
+  const s = String(raw).trim()
+  if (!s) return ""
+  if (INCOME_BANDS.includes(s)) return s
+  const clean = s.replace(/,/g, "")
+  const m =
+    clean.match(/\$\s*(\d+(?:\.\d+)?)\s*([km]|thousand|million|billion)?/i) ||
+    clean.match(/(\d+(?:\.\d+)?)\s*([km]|thousand|million|billion)?/i)
+  if (!m) return ""
+  let n = Number(m[1])
+  if (!Number.isFinite(n)) return ""
+  const suf = (m[2] || "").toLowerCase()
+  if (suf === "k" || suf === "thousand") n *= 1_000
+  else if (suf === "m" || suf === "million") n *= 1_000_000
+  else if (suf === "billion") n *= 1_000_000_000
+  if (n < 25000) return "$0–$25k"
+  if (n < 50000) return "$25–$50k"
+  if (n < 75000) return "$50–$75k"
+  if (n < 100000) return "$75–$100k"
+  if (n < 150000) return "$100–$150k"
+  if (n < 200000) return "$150–$200k"
+  return "$200k+"
+}
+
+// Party identification → Republican / Democrat / Independent. Anything that is
+// neither major party (incl. "Independent / Other") buckets to Independent.
+function partyOf(raw: string): string {
+  const v = norm(raw)
+  if (!v) return ""
+  if (v.includes("republican")) return "Republican"
+  if (v.includes("democrat")) return "Democrat"
+  return "Independent"
 }
 
 function recallOf(raw: string): { recall: string; voted: boolean } {
@@ -267,6 +327,8 @@ export function deriveAll(
     const { edu, bin } = mapping.education ? eduOf(row[mapping.education] ?? "") : { edu: "HS or less", bin: "No College" as const }
     const raceEdu = raceEduOf(mapping.race ? row[mapping.race] ?? "" : "", bin)
     const region = regionOf(row, mapping)
+    const income = mapping.income ? incomeBand(row[mapping.income] ?? "") : ""
+    const party = mapping.party ? partyOf(row[mapping.party] ?? "") : ""
     const { recall, voted } = mapping.recall2024 ? recallOf(row[mapping.recall2024] ?? "") : { recall: "DNV", voted: false }
     const { bucket, count } = mapping.q2 ? historyOf(row[mapping.q2] ?? "") : { bucket: "occasional" as HistoryBucket, count: 1 }
 
@@ -278,6 +340,8 @@ export function deriveAll(
       eduBin: bin,
       raceEdu,
       region,
+      income,
+      party,
       recall,
       ageSex: `${ageBkt} · ${sex}`,
       eduSex: `${sex} · ${bin === "College" ? "College" : "No College"}`,

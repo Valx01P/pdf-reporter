@@ -11,6 +11,8 @@ export interface DerivedRespondent {
   eduBin: "College" | "No College"
   raceEdu: string // 5-cell
   region: string // 8-region
+  income: string // 7-band income bracket, or "" when no income column
+  party: string // Republican / Democrat / Independent, or "" when no party column
   recall: string // Trump / Harris / Third / DNV
   // joint cell labels
   ageSex: string
@@ -37,6 +39,7 @@ export interface ColumnMapping {
   region?: string
   state?: string
   income?: string
+  party?: string
   recall2024?: string
 }
 
@@ -112,6 +115,10 @@ export interface Diagnostics {
   weightMin: number
   weightMax: number
   weightMean: number
+  weightMedian?: number
+  weightP99?: number
+  pctGt2?: number // % of (mean-1-normalized) weights above 2× the mean
+  pctGt3?: number // % above 3× the mean
   smd: { dimension: string; maxSmd: number; balanced: boolean }[]
 }
 

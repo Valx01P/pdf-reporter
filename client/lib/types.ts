@@ -128,11 +128,23 @@ export interface TabbookRow {
   significant: boolean[] // aligned to columns; Total is always false
 }
 
+// Net / summary rows beneath a question's options, computed per banner column.
+// Mirrors the Wisconsin tabbook: Approve/Disapprove/Net, More/Less/Net,
+// horse-race Republican/Democrat Total + Net (R+ / D+).
+export interface TabbookSummaryRow {
+  label: string // "Approve", "Net (App – Disapp)", "Net (R+ / D+)", …
+  values: number[] // per-column value aligned to columns; index 0 = Total
+  format: "pct" | "net" | "margin" // pct → 39.5% · net → +/-X.X% · margin → D+X.X / R+X.X
+  emphasis?: boolean // true for the bold Net row
+}
+
 export interface TabbookQuestion {
   key: string
   prompt: string
   type: QuestionType
   rows: TabbookRow[] // empty for numeric / open_ended
+  summary?: TabbookSummaryRow[] // net rows beneath the options (approval / likelihood / ballot)
+  valueFormat?: "rank" // "rank" → cells are mean ranks (e.g. 3.81), not percentages
   note?: string // one-line summary for numeric / open_ended questions
 }
 

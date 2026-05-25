@@ -8,6 +8,8 @@ import { deriveAll, type ParsedCsv } from "./derive"
 import { scoreLv } from "./lv"
 import { deriveLvTargets, deriveRvTargets } from "./socal"
 import { diagnostics, rake, recallCalibrate } from "./rake"
+import { customDiagnostics, rakeCustom, type CustomVariable } from "./custom-weight"
+import { demoValue } from "./tabulate"
 import { entropyBalance } from "./entropy"
 import { activeDimsFor, buildAgeEduTargets, BASE_DIMS, cellOf } from "./cells"
 import { CPS_DNV_SHARE, type TargetSet } from "./constants"
@@ -30,6 +32,7 @@ export interface PipelineInput {
   baseTargets: TargetSet
   weightingSet: "A" | "B" | "C"
   cpsDnv?: number
+  customWeighting?: { key: string; label?: string; isDemo: boolean; targets: Record<string, number> }[]
 }
 
 function composition(derived: PipelineResult["derived"], dim: keyof DimensionTargets, w: number[]): Record<string, number> {
@@ -62,6 +65,58 @@ export function runPathway3(input: PipelineInput): PipelineResult {
 
   // LV scoring on the raw unweighted sample
   const lv = scoreLv(derived, input.lvConfig)
+
+  // ── Custom weighting branch ─────────────────────────────────────────────────
+  // Rake RV/LV to the user's chosen variables + targets, bypassing the Set A/B/C
+  // SOCAL priors and FEC/CPS recall calibration ("input your own weights").
+  // Only weight on variables whose keys exist in this CSV (a demographic, or a
+  // present survey column) — drops stale keys from a previous dataset.
+  const customSpecs = (input.customWeighting ?? []).filter((v) => v.isDemo || input.parsed.headers.includes(v.key))
+  if (customSpecs.length) {
+    const rows = input.parsed.rows
+    const buildVars = (): CustomVariable[] =>
+      customSpecs.map((v) => ({
+        key: v.key,
+        label: v.label || v.key,
+        isDemo: v.isDemo,
+        cellByResp: derived.map((d) => (v.isDemo ? demoValue(d, v.key) : (rows[d.i][v.key] ?? "").trim() || "(blank)")),
+        target: v.targets,
+      }))
+    const rvVars = buildVars()
+    const rvR = rakeCustom(rvVars)
+    const rvDiag = customDiagnostics(rvR.weights, rvVars)
+    const lvVars = buildVars()
+    const lvR = rakeCustom(lvVars, lv.pvote)
+    const lvDiag = customDiagnostics(lvR.weights, lvVars)
+    if (rvDiag.deff > 2.0) warnings.push(`RV design effect is ${rvDiag.deff} (>2.0) — review weight distribution before publication.`)
+    if (lvDiag.deff > 2.0) warnings.push(`LV design effect is ${lvDiag.deff} (>2.0) — review weight distribution before publication.`)
+    warnings.push("Custom weighting is active: RV and LV are raked to your chosen variables and targets — the SOCAL priors and FEC/CPS recall calibration are bypassed.")
+
+    const emptyTargets: DimensionTargets = { ageSex: {}, eduSex: {}, raceEdu: {}, region: {}, recall2024: {} }
+    const shift = DIM_KEYS.map((dim) => {
+      const rvComp = composition(derived, dim, rvR.weights)
+      const pvComp = composition(derived, dim, lv.pvote)
+      const lvComp = composition(derived, dim, lvR.weights)
+      const cells = new Set([...Object.keys(rvComp), ...Object.keys(lvComp)])
+      const out: ShiftRow[] = Array.from(cells)
+        .map((cell) => ({ cell, rv: rvComp[cell] || 0, pvote: pvComp[cell] || 0, lv: lvComp[cell] || 0 }))
+        .sort((a, b) => b.lv - a.lv)
+      return { dimension: dim, rows: out }
+    })
+
+    return {
+      name: input.name,
+      quality,
+      keptCount: derived.length,
+      derived,
+      lv,
+      socal: { rv: {}, lv: {} },
+      rv: { universe: "RV", weights: rvR.weights, targets: emptyTargets, rakeLog: rvR.log, diagnostics: rvDiag, recall: [] },
+      lvUniverse: { universe: "LV", weights: lvR.weights, targets: emptyTargets, rakeLog: lvR.log, diagnostics: lvDiag, recall: [] },
+      shift,
+      warnings,
+    }
+  }
 
   // Phase 2 — independent SOCAL targets
   const rvTargets = deriveRvTargets(derived, input.baseTargets)
