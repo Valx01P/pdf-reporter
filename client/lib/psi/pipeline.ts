@@ -11,7 +11,7 @@ import { diagnostics, rake, recallCalibrate } from "./rake"
 import { customDiagnostics, rakeCustom, type CustomVariable } from "./custom-weight"
 import { demoValue } from "./tabulate"
 import { entropyBalance } from "./entropy"
-import { activeDimsFor, buildAgeEduTargets, BASE_DIMS, cellOf } from "./cells"
+import { activeDimsFor, buildAgeEduTargets, BASE_DIMS, cellOf, DIM_LABELS } from "./cells"
 import { CPS_DNV_SHARE, type TargetSet } from "./constants"
 import type {
   ColumnMapping,
@@ -53,7 +53,11 @@ export function runPathway3(input: PipelineInput): PipelineResult {
   // Phase 1 — shared derivation + quality screen
   const { derived, quality, coerced } = deriveAll(input.parsed, input.mapping, input.substantiveKeys)
   if (coerced > 0) warnings.push(`${coerced} respondent${coerced === 1 ? "" : "s"} had non-binary or unrecognised sex coerced to a binary cell for raking.`)
-  if (!input.mapping.q3 || !input.mapping.q4 || !input.mapping.q5)
+  if (!input.mapping.q3 && !input.mapping.q4 && !input.mapping.q5)
+    warnings.push(
+      'None of the likely-voter screen questions were recognized, so the turnout model can\'t differentiate respondents — the Likely-Voter universe will closely mirror Registered Voters. In the Data tab, map a turnout-intent or enthusiasm question (e.g. "How likely are you to vote") to Q3/Q4, or weight directly on a likely-voter variable.',
+    )
+  else if (!input.mapping.q3 || !input.mapping.q4 || !input.mapping.q5)
     warnings.push("One or more of the Q3/Q4/Q5 likely-voter questions was not mapped — LV scores fall back to neutral (0.5) for the missing dimension.")
   const demoCols = [input.mapping.age, input.mapping.sex, input.mapping.education, input.mapping.race, input.mapping.region, input.mapping.state].filter(Boolean).length
   if (demoCols === 0)
@@ -130,7 +134,28 @@ export function runPathway3(input: PipelineInput): PipelineResult {
     lvTargets.targets.ageEdu = buildAgeEduTargets(lvTargets.targets)
     warnings.push("Set B: the Age×Education joint dimension is derived from the age and education marginals under independence (no published joint target exists).")
   }
-  const activeDims = activeDimsFor(input.weightingSet, rvTargets.targets)
+  // Drop any base dimension whose observed categories barely overlap the
+  // benchmark vocabulary — e.g. a 4-region Census column against the 8-region
+  // target, where >half the sample falls in cells the benchmark can't reach.
+  // Raking it would distort the sample toward the unreachable target, so leave
+  // it unweighted and point the user at Custom weighting (their own targets).
+  const droppedDims: (keyof DimensionTargets)[] = []
+  for (const dim of BASE_DIMS) {
+    const benchKeys = new Set(Object.keys(input.baseTargets[dim]).filter((k) => input.baseTargets[dim][k] > 0))
+    if (!benchKeys.size) continue
+    let inBench = 0
+    for (const d of derived) if (benchKeys.has(cellOf(d, dim))) inBench++
+    if (derived.length && inBench / derived.length < 0.6) {
+      droppedDims.push(dim)
+      // Emptied (not raked) so diagnostics/SMD/balance skip it too.
+      rvTargets.targets[dim] = {}
+      lvTargets.targets[dim] = {}
+      warnings.push(
+        `${DIM_LABELS[dim] || dim} categories in your data don't match the standard benchmark (e.g. 4 Census regions vs the 8-region target), so this dimension was left unweighted. Use Custom weighting to weight it to your own targets.`,
+      )
+    }
+  }
+  const activeDims = activeDimsFor(input.weightingSet, rvTargets.targets).filter((d) => !droppedDims.includes(d))
 
   // Phase 3a — RV track: entropy-balancing init (from uniform) → raking
   const uniform = new Array(derived.length).fill(1)

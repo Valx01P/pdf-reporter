@@ -61,49 +61,101 @@ export function bestKeyFor(value: string, map: Record<string, number>): { key: s
   return best
 }
 
-// Fraction of a column's distinct values that confidently map to a weight map.
-function coverage(values: string[], map: Record<string, number>): number {
-  const distinct = Array.from(new Set(values.filter(Boolean)))
-  if (!distinct.length) return 0
-  const ok = distinct.filter((v) => bestKeyFor(v, map).score >= 0.5).length
-  return ok / distinct.length
-}
-
 function colValues(rows: Record<string, string>[], key: string): string[] {
   return rows.map((r) => (r[key] ?? "").trim()).filter(Boolean)
 }
 
 // ── column auto-detection ───────────────────────────────────────────────────
 
-const HEADER_HINTS: { field: keyof ColumnMapping; re: RegExp }[] = [
-  { field: "q2", re: /(^|[^a-z])q?\.?\s*2([^0-9]|$)|vote.?history|which elections|elections.*voted|voted in/i },
-  { field: "q3", re: /(^|[^a-z])q?\.?\s*3([^0-9]|$)|motivat/i },
-  { field: "q4", re: /(^|[^a-z])q?\.?\s*4([^0-9]|$)|how.*(will|do) you (plan to )?vote|polling location|prepared/i },
-  { field: "q5", re: /(^|[^a-z])q?\.?\s*5([^0-9]|$)|closest to you|people.*plan to vote|social/i },
-  { field: "age", re: /^(age|age_?years?|respondent_?age|exact_?age)$/i },
-  { field: "sex", re: /^(sex|gender|gender_?identity|demo_?gender)$/i },
-  { field: "education", re: /^(education|educ|edu|education_?level|edu_?level|demo_?education)$/i },
-  // DEMO_Ethnicity carries the Hispanic category and (being earlier in the file)
-  // wins over DEMO_Race, which lacks it — so race/ethnicity classify correctly.
-  { field: "race", re: /^(race|ethnicity|race_?ethnicity|ethnic|demo_?ethnicity|demo_?race)$/i },
-  { field: "region", re: /^(region|census_?region|area)$/i },
-  { field: "state", re: /^(state|st|state_?code|state_?abbr|demo_?state|us_?state)$/i },
-  { field: "income", re: /^(income|hh_?income|household_?income|income_?band|demo_?income)$/i },
-  { field: "party", re: /^(party|party_?id|q9_?partyid|party_?identification|political_?party)$/i },
-  { field: "recall2024", re: /(2024|vote2024).*(vote|recall|choice|who)|who.*2024|presidential.*2024|recall/i },
+// Fuzzy, label-tolerant detection. A header is scored against each field's
+// candidate phrases by token overlap, plus a bonus when the field's primary
+// keyword appears as a whole word — so real-world labels like "US Region",
+// "Education Level", or "Party ID (With Leaners)" are picked up even though they
+// don't match a rigid pattern. Best score wins per field; ties break toward the
+// earlier column. Q3/Q4/Q5 and the recall column are detected separately (by
+// option-content and past-vote phrasing) so genuine survey questions aren't
+// hijacked into a likely-voter slot and dropped from the toplines.
+const FIELD_CANDIDATES: { field: keyof ColumnMapping; phrases: string[]; primary: RegExp }[] = [
+  { field: "q2", phrases: ["vote history", "voting history", "which elections", "elections voted", "voted in", "how often do you vote", "vote frequency", "frequency of voting"], primary: /\b(vote|voting) history\b|how often.*\bvote\b|\bvot(e|ing) frequen/ },
+  { field: "age", phrases: ["age", "age group", "age band", "age range", "age bracket", "respondent age"], primary: /\bage\b/ },
+  { field: "sex", phrases: ["sex", "gender", "gender identity"], primary: /\b(sex|gender)\b/ },
+  { field: "education", phrases: ["education", "education level", "level of education", "educational attainment", "highest education", "educ"], primary: /\beducation(al)?\b/ },
+  { field: "race", phrases: ["race", "ethnicity", "race ethnicity", "race and ethnicity", "racial"], primary: /\b(race|ethnic|racial)/ },
+  { field: "region", phrases: ["region", "us region", "census region", "geographic region", "region of country", "area"], primary: /\bregion\b/ },
+  { field: "state", phrases: ["state", "us state", "state code", "state abbreviation", "home state", "state of residence"], primary: /\bstate\b/ },
+  { field: "income", phrases: ["income", "household income", "hh income", "annual income", "family income"], primary: /\bincome\b/ },
+  { field: "party", phrases: ["party", "party id", "partyid", "party identification", "political party", "party affiliation", "party id with leaners", "partisan id"], primary: /\bpart(y|isan)\b|partyid/ },
 ]
+
+function scoreHeader(header: string, cand: { phrases: string[]; primary: RegExp }): number {
+  const ht = tokens(header)
+  const hn = norm(header)
+  let best = 0
+  for (const p of cand.phrases) {
+    const pn = norm(p)
+    if (hn === pn) return 1 // exact (normalized) header == phrase
+    let s = jaccard(ht, tokens(p))
+    // Header contains a whole MULTI-WORD phrase as words ("US Region" ⊃ "us
+    // region"). Multi-word only: a single keyword contained in a long question
+    // ("…which party's candidate…") is not strong evidence — that's left to the
+    // token-count-gated primary bonus below, so questions aren't claimed.
+    if (pn.includes(" ") && new RegExp(`\\b${pn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(hn)) s = Math.max(s, 0.8)
+    best = Math.max(best, s)
+  }
+  // Primary-keyword bonus only for short, demographic-like headers — so a long
+  // survey question that merely mentions a keyword (e.g. "which party's
+  // candidate…") isn't claimed as that demographic and dropped from the toplines.
+  if (ht.size <= 4 && cand.primary.test(hn)) best = Math.max(best, 0.7)
+  return best
+}
+
+// Coverage by token overlap (not substring): the fraction of a column's distinct
+// values that substantially match a canonical option. Used to detect Q3/Q4/Q5 by
+// their answer wording, so a short generic scale ("Very"/"Somewhat") doesn't get
+// claimed just because those words appear inside a long canonical option.
+function contentCoverage(values: string[], map: Record<string, number>): number {
+  const distinct = Array.from(new Set(values.filter(Boolean)))
+  if (!distinct.length) return 0
+  const keyTokens = Object.keys(map).map(tokens)
+  const ok = distinct.filter((v) => {
+    const vt = tokens(v)
+    return vt.size > 0 && keyTokens.some((kt) => jaccard(vt, kt) >= 0.5)
+  }).length
+  return ok / distinct.length
+}
 
 export function autoDetect(parsed: ParsedCsv): ColumnMapping {
   const m: ColumnMapping = {}
   const { headers, rows } = parsed
 
-  // 1) header hints
-  for (const h of headers) {
-    for (const hint of HEADER_HINTS) {
-      if (!m[hint.field] && hint.re.test(h)) m[hint.field] = h
+  // 1) scored header matching, assigned greedily (highest score first; earlier
+  // column breaks ties — so e.g. an Ethnicity column outranks a later Race one).
+  const pairs: { field: keyof ColumnMapping; header: string; idx: number; score: number }[] = []
+  headers.forEach((h, idx) => {
+    for (const cand of FIELD_CANDIDATES) {
+      const score = scoreHeader(h, cand)
+      if (score >= 0.5) pairs.push({ field: cand.field, header: h, idx, score })
+    }
+  })
+  pairs.sort((a, b) => b.score - a.score || a.idx - b.idx)
+  const usedHeaders = new Set<string>()
+  for (const p of pairs) {
+    if (m[p.field] || usedHeaders.has(p.header)) continue
+    m[p.field] = p.header
+    usedHeaders.add(p.header)
+  }
+
+  // 2) recall column — a past-vote partisan anchor, not the horse-race ballot.
+  if (!m.recall2024) {
+    const recall = detectRecall(headers.filter((h) => !usedHeaders.has(h)))
+    if (recall) {
+      m.recall2024 = recall
+      usedHeaders.add(recall)
     }
   }
-  // 2) value-content matching for Q3/Q4/Q5 (robust to opaque headers)
+
+  // 3) Q3/Q4/Q5 by option-content (robust to opaque headers); only over columns
+  // not already claimed, so a real question is never consumed as a screen var.
   const maps: [keyof ColumnMapping, Record<string, number>][] = [
     ["q3", Q3_MOTIVATION],
     ["q4", Q4_PREPAREDNESS],
@@ -113,17 +165,122 @@ export function autoDetect(parsed: ParsedCsv): ColumnMapping {
     if (m[field]) continue
     let best = { h: "", cov: 0 }
     for (const h of headers) {
-      if (Object.values(m).includes(h)) continue
-      const cov = coverage(colValues(rows, h), map)
+      if (usedHeaders.has(h) || Object.values(m).includes(h)) continue
+      const cov = contentCoverage(colValues(rows, h), map)
       if (cov > best.cov) best = { h, cov }
     }
-    if (best.cov >= 0.5) m[field] = best.h
+    // Require a strong option-wording match so a generic scale (e.g. a 4-point
+    // enthusiasm question) isn't claimed as an LV screen and pulled out of the
+    // toplines; a genuine PSI Q3/Q4/Q5 column matches near 1.0.
+    if (best.cov >= 0.6) {
+      m[field] = best.h
+      usedHeaders.add(best.h)
+    }
+  }
+
+  // 3b) Likely-voter screens by topic — a turnout-intent question ("How likely
+  // are you to vote") → Q4 and an enthusiasm/motivation question → Q3, when the
+  // option wording didn't match the canonical PSI maps. Specific phrasing only,
+  // so substantive questions aren't pulled into a screen slot; their ordinal
+  // answers are scored by `ordinalPropensity` in buildWeightMap.
+  const SCREEN: { field: keyof ColumnMapping; re: RegExp }[] = [
+    { field: "q4", re: /how likely.*\bvote\b|likelihood (of|to) vot|intend.*\bvote\b|will you vote|plan to vote|certain to vote/ },
+    { field: "q3", re: /enthusias|how motivated|motivation (to|for) vot/ },
+  ]
+  for (const s of SCREEN) {
+    if (m[s.field]) continue
+    const h = headers.find((h) => !usedHeaders.has(h) && s.re.test(norm(h)))
+    if (h) {
+      m[s.field] = h
+      usedHeaders.add(h)
+    }
+  }
+
+  // 4) Q-number header fallback for the LV screens (e.g. "Q3_VoteIntent",
+  // "Q4: Ballot method") when option-content didn't already claim them. Matches
+  // only Q2–Q5 at the start of the header, so Q10/Q12 etc. are never caught.
+  const qnumField: Record<string, keyof ColumnMapping> = { "2": "q2", "3": "q3", "4": "q4", "5": "q5" }
+  for (const h of headers) {
+    if (usedHeaders.has(h)) continue
+    const mq = norm(h).match(/^q ?([2-5])\b/)
+    if (!mq) continue
+    const field = qnumField[mq[1]]
+    if (field && !m[field]) {
+      m[field] = h
+      usedHeaders.add(h)
+    }
+  }
+
+  // 5) Region refinement: when several columns look like a region, prefer the
+  // one whose values best fill the 8-region benchmark — so a full national-region
+  // column wins over a 4-region "US Region" the rake would otherwise have to drop.
+  const regionCand = FIELD_CANDIDATES.find((c) => c.field === "region")
+  if (regionCand) {
+    const region8 = REGION8 as readonly string[]
+    const fit = (h: string) =>
+      Array.from(new Set(colValues(rows, h))).filter((v) => region8.includes(canonicalRegion(v))).length
+    let best = { h: m.region || "", score: m.region ? fit(m.region) : -1 }
+    headers.forEach((h) => {
+      if (scoreHeader(h, regionCand) < 0.5) return
+      const f = fit(h)
+      if (f > best.score) best = { h, score: f }
+    })
+    if (best.h) m.region = best.h
   }
   return m
 }
 
+// A horse-race ballot ("if the election were held today…") or turnout screen is
+// NOT a recall — weighting to it would be circular. Exclude that phrasing.
+const BALLOT_RE =
+  /held today|if the .*election|election .*(were|was) held|going to vote|plan(ning)? to vote|how (likely|enthusiastic)|would you (support|vote|pick|choose)|candidates? were|support for|head to head|generic ballot/
+// A real past-vote recall: "who did you vote for", an explicit recall, a
+// "vote(d) … in <year>" past-election phrasing, or a compact "<year>vote" /
+// "vote<year>" column name (e.g. "Q6_2024Vote").
+const RECALL_RE =
+  /who did you vote for|\brecall(ed)?\b|vote(d)? for .*(in|during) (the )?(19|20)\d\d|(19|20)\d\d .*(presidential|general|midterm|election).*\bvote|(19|20)\d\d ?vote|vote ?(19|20)\d\d/
+
+// Vote-history / turnout-frequency phrasing — that's the Q2 variable, not a
+// single past-vote recall, so it must not be picked up as the recall anchor.
+const HISTORY_RE = /select all that apply|at least once|which (of the following )?election|elections .*(did|have) you vot|years did you vote|how often/
+
+function detectRecall(headers: string[]): string | undefined {
+  const cands = headers.filter((h) => {
+    const hn = norm(h)
+    if (BALLOT_RE.test(hn) || HISTORY_RE.test(hn)) return false
+    return RECALL_RE.test(hn) || (/\bvote/.test(hn) && /(19|20)\d\d/.test(hn) && /\bwho\b|did you/.test(hn))
+  })
+  if (!cands.length) return undefined
+  // Prefer the most recent past election the column refers to.
+  const yearOf = (h: string) => {
+    const ys = norm(h).match(/(19|20)\d\d/g)
+    return ys ? Math.max(...ys.map(Number)) : 0
+  }
+  return cands.sort((a, b) => yearOf(b) - yearOf(a))[0]
+}
+
+// Score a likely-voter screen answer on an ordinal turnout/enthusiasm scale to a
+// 0..1 propensity, or null when it isn't recognizable as one. Lets a screen that
+// doesn't use the canonical PSI wording (e.g. "Certain / Likely / Unlikely",
+// "Very / Somewhat / Not at all") still differentiate respondents in the LV
+// model. Order matters: neutral is checked before "unlikely" so "Neither likely
+// nor unlikely" lands in the middle; negatives before positives.
+export function ordinalPropensity(raw: string): number | null {
+  const v = norm(raw)
+  if (!v) return null
+  if (/already voted|have (already )?voted|i voted/.test(v)) return 0.98 // already cast = certain
+  if (/neither|unsure|not sure|undecided|toss up|50 ?50|maybe|it depends|moderate/.test(v)) return 0.45
+  if (/not at all|certain not|definitely not|will not|won t\b|no chance|\bnever\b/.test(v)) return 0.06
+  if (/not (very|too|that|likely)|unlikely|probably not|doubt|slightly|a little|^low$/.test(v)) return 0.22
+  if (/\bcertain\b|definitely|absolutely|extremely|very likely|highly likely/.test(v)) return 0.95
+  if (/^very\b|very (likely|motivated|enthusiastic)|enthusiastic|highly|\blikely\b/.test(v)) return 0.85
+  if (/somewhat|fairly|probably|^likely|sometimes/.test(v)) return 0.62
+  return null
+}
+
 // Build the response→weight map for one column by fuzzy-matching its distinct
-// values to the canonical PSI weights. Unmatched values default to 0.5.
+// values to the canonical PSI weights. Values that don't match fall back to an
+// ordinal turnout/enthusiasm propensity, then to 0.5 (neutral).
 export function buildWeightMap(
   rows: Record<string, string>[],
   col: string | undefined,
@@ -133,7 +290,7 @@ export function buildWeightMap(
   if (!col) return out
   for (const v of Array.from(new Set(colValues(rows, col)))) {
     const { key, score } = bestKeyFor(v, canonical)
-    out[v] = score >= 0.4 ? canonical[key] : 0.5
+    out[v] = score >= 0.4 ? canonical[key] : (ordinalPropensity(v) ?? 0.5)
   }
   return out
 }
@@ -168,10 +325,14 @@ function sexOf(raw: string): string {
 
 function eduOf(raw: string): { edu: string; bin: "College" | "No College" } {
   const v = norm(raw)
+  // Explicit "No College" / "high school" must be tested before the generic
+  // /college/ rule below, or "No College" gets miscounted as College.
+  if (/\b(no|non|not|without) college\b|noncollege|high school|hs (or|degree|grad|diploma)|less than (a )?college|no degree|did not (finish|complete|graduate)|some high school|ged\b/.test(v))
+    return { edu: "HS or less", bin: "No College" }
   if (/post ?grad|master|phd|doctor|professional|jd|md|graduate degree/.test(v)) return { edu: "Postgrad", bin: "College" }
   if (/bachelor|college (grad|degree)|4 year|four year|ba\b|bs\b|undergrad/.test(v)) return { edu: "College grad", bin: "College" }
   if (/some college|associate|2 year|two year|aa\b|vocational|technical/.test(v)) return { edu: "Some college", bin: "No College" }
-  if (/college/.test(v) && !/some/.test(v)) return { edu: "College grad", bin: "College" }
+  if (/college|university|degree/.test(v)) return { edu: "College grad", bin: "College" } // plain "College"
   return { edu: "HS or less", bin: "No College" }
 }
 
@@ -191,26 +352,46 @@ const REGION_ALIAS: Record<string, string> = {
   "appalachia south interior": "Appalachia",
 }
 
+// The 4 standard US Census regions — many polling files use these instead of
+// the 8-region scheme. Recognized and preserved as-is so they survive into the
+// composition, crosstabs, and (via the pipeline's overlap guard) custom weighting.
+export const CENSUS4 = ["Northeast", "Midwest", "South", "West"] as const
+
+// Canonicalize a raw region string to a known region label (REGION8, Census-4,
+// or a full-name alias), or "" if it isn't recognizable as a region.
+function canonicalRegion(raw: string): string {
+  const r = norm(raw)
+  if (!r) return ""
+  const r8 = REGION8.find((reg) => norm(reg) === r)
+  if (r8) return r8
+  const c4 = CENSUS4.find((reg) => norm(reg) === r)
+  if (c4) return c4
+  if (REGION_ALIAS[r]) return REGION_ALIAS[r]
+  // partial match onto a Census region (e.g. "South Atlantic" → "South")
+  for (const reg of CENSUS4) if (r.includes(norm(reg))) return reg
+  return ""
+}
+
 function regionOf(row: Record<string, string>, mapping: ColumnMapping): string {
-  // explicit region column — match the 8-region vocabulary directly or via alias
+  // explicit region column — keep the recognized region category (REGION8 or
+  // the 4 Census regions) rather than forcing everything into one bucket.
   if (mapping.region) {
-    const r = norm(row[mapping.region] ?? "")
-    if (r) {
-      const match = REGION8.find((reg) => norm(reg) === r)
-      if (match) return match
-      if (REGION_ALIAS[r]) return REGION_ALIAS[r]
-    }
+    const c = canonicalRegion(row[mapping.region] ?? "")
+    if (c) return c
   }
   // state column — full name ("California"), "Illinois (US-IL)", or 2-letter code.
   // Fall back to the region column's value (when no state column) so a region
-  // field that actually holds state names/codes still resolves instead of "West".
+  // field that actually holds state names/codes still resolves.
   const stRaw = mapping.state ? (row[mapping.state] ?? "").trim() : mapping.region ? (row[mapping.region] ?? "").trim() : ""
   if (stRaw) {
     const s = stRaw.split("(")[0].trim()
     const code = s.length === 2 ? s.toUpperCase() : STATE_NAME_TO_CODE[norm(s)] || ""
     if (code && STATE_TO_REGION[code]) return STATE_TO_REGION[code]
   }
-  return "West" // default bucket; flagged via SMD if it distorts
+  // Last resort: keep the raw region value (so an unknown scheme still forms its
+  // own cells for display) rather than silently dumping everyone into one region.
+  const rawRegion = mapping.region ? (row[mapping.region] ?? "").trim() : ""
+  return rawRegion || "West"
 }
 
 // 7-band income brackets, in display order (matches the Wisconsin tabbook).
@@ -267,8 +448,16 @@ function recallOf(raw: string): { recall: string; voted: boolean } {
 
 function historyOf(raw: string): { bucket: HistoryBucket; count: number } {
   const v = norm(raw)
-  if (!v || /never voted|have never|none of/.test(v)) return { bucket: "new", count: 0 }
-  // numeric count?
+  if (!v) return { bucket: "new", count: 0 }
+  // Frequency-style answers ("How often do you vote?": Always / Sometimes /
+  // Rarely / Never / Recently registered) — bucket directly.
+  if (/\b(always|every election|every time|all elections|in every)\b/.test(v)) return { bucket: "consistent", count: 3 }
+  if (/\b(rarely|seldom|recently registered|newly registered|first time|just registered)\b|never voted|have never|none of/.test(v))
+    return { bucket: "new", count: 0 }
+  if (/^never$|\bnever\b/.test(v)) return { bucket: "new", count: 0 }
+  if (/\b(only in presidential|presidential.*only|sometimes|occasional|usually|most elections|most of the time)\b/.test(v))
+    return { bucket: "occasional", count: 1 }
+  // numeric count, or a multi-select list of elections ("2024 General; 2022 …")
   const asNum = Number(raw)
   let count: number
   if (Number.isFinite(asNum)) count = asNum

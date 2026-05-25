@@ -50,6 +50,20 @@ export function fetchSummary(args: RunArgs): Promise<{ summary: AiSummary }> {
   return postJson("/api/ai/summary", args)
 }
 
+export interface MappingSuggestion {
+  field: string
+  column: string | null
+  reason: string
+}
+
+// AI-suggested column mappings for the fields the auto-detector left unfilled.
+// `ai: false` means no key / no usable suggestion — the user maps manually.
+export function fetchMappingSuggestions(
+  args: RunArgs & { fields?: string[] },
+): Promise<{ ai: boolean; suggestions: MappingSuggestion[] }> {
+  return postJson("/api/ai/mapping", args)
+}
+
 export function fetchUncertainty(args: RunArgs & { bootstrap?: number }): Promise<{ uncertainty: UncertaintyResult }> {
   return postJson("/api/uncertainty", args)
 }

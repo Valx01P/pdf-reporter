@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Download, Loader2 } from "lucide-react"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
 import { fetchExportFile, fetchTabbook, type ClientPayload, type RunConfig } from "@/lib/client-api"
@@ -30,12 +30,31 @@ function TabbookGrid({ tb }: { tb: Tabbook }) {
   // them and the text overlaps (e.g. "Total" showing through "Response").
   const tint = (pct: number) => `color-mix(in srgb, var(--foreground) ${pct}%, var(--background))`
 
+  // The three header rows are each sticky-top; their offsets must chain by the
+  // actual rendered heights, not fixed pixels — column labels wrap to a variable
+  // number of lines, so a hardcoded top would let the rows below overlap them.
+  const groupRowRef = useRef<HTMLTableRowElement>(null)
+  const colRowRef = useRef<HTMLTableRowElement>(null)
+  const [stickyTop, setStickyTop] = useState({ col: 29, n: 58 })
+  useLayoutEffect(() => {
+    const measure = () => {
+      const h1 = groupRowRef.current?.offsetHeight ?? 29
+      const h2 = colRowRef.current?.offsetHeight ?? 29
+      setStickyTop((prev) => (prev.col === h1 && prev.n === h1 + h2 ? prev : { col: h1, n: h1 + h2 }))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    if (groupRowRef.current) ro.observe(groupRowRef.current)
+    if (colRowRef.current) ro.observe(colRowRef.current)
+    return () => ro.disconnect()
+  }, [tb])
+
   return (
     <div className="max-w-full overflow-auto rounded-lg border border-foreground/10" style={{ maxHeight: "75dvh" }}>
       <table className="w-max border-collapse text-tiny">
         <thead>
           {/* grouped banner header */}
-          <tr className="sticky top-0 z-20" style={{ background: tint(4) }}>
+          <tr ref={groupRowRef} className="sticky top-0 z-20" style={{ background: tint(4) }}>
             <th className={`${labelCls} z-30 align-bottom font-semibold text-foreground/70`} style={{ background: tint(4) }}>Response</th>
             {tb.groups.map((g, gi) => (
               <th
@@ -48,12 +67,12 @@ function TabbookGrid({ tb }: { tb: Tabbook }) {
             ))}
           </tr>
           {/* column labels */}
-          <tr className="sticky top-[29px] z-20" style={{ background: tint(2) }}>
+          <tr ref={colRowRef} className="sticky z-20" style={{ top: stickyTop.col, background: tint(2) }}>
             <th className={`${labelCls} z-30`} style={{ background: tint(2) }} />
             {tb.columns.map((c, i) => (
               <th
                 key={`${c.groupKey}-${c.value}-${i}`}
-                className={`max-w-[120px] whitespace-nowrap px-2.5 py-1.5 text-right align-bottom font-medium text-foreground/70 ${c.isTotal ? "font-semibold" : ""} ${cellBorder(i)}`}
+                className={`w-[88px] min-w-[88px] whitespace-normal break-words px-2.5 py-1.5 text-right align-bottom font-medium leading-tight text-foreground/70 ${c.isTotal ? "font-semibold" : ""} ${cellBorder(i)}`}
                 title={c.label}
               >
                 {c.label}
@@ -61,7 +80,7 @@ function TabbookGrid({ tb }: { tb: Tabbook }) {
             ))}
           </tr>
           {/* unweighted n */}
-          <tr className="sticky top-[58px] z-20 border-b border-foreground/15 bg-background text-foreground/45">
+          <tr className="sticky z-20 border-b border-foreground/15 bg-background text-foreground/45" style={{ top: stickyTop.n }}>
             <th className={`${labelCls} text-[10px] font-normal`}>(unweighted n)</th>
             {tb.columns.map((c, i) => (
               <td key={`n-${i}`} className={`px-2.5 py-1 text-right font-mono text-[10px] ${cellBorder(i)}`}>

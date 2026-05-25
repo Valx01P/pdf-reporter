@@ -155,6 +155,9 @@ export function buildToplines(full: FullResult): QuestionToplines[] {
 export interface ClientPayload {
   name: string
   headers: string[]
+  // Top distinct values per column, so the UI can show concrete examples of what
+  // each column actually contains (used by the issues reviewer).
+  columnSamples: Record<string, string[]>
   mapping: ColumnMapping
   substantiveKeys: string[]
   bannerDims: { key: string; label: string; isDemo: boolean }[]
@@ -266,9 +269,25 @@ export function buildClientPayload(full: FullResult): ClientPayload {
     }))
   const weightingVariables = [...demoVars, ...surveyVars]
 
+  // Top 6 distinct values per column for the "what this column contains" examples.
+  const columnSamples: Record<string, string[]> = {}
+  for (const h of parsed.headers) {
+    const counts = new Map<string, number>()
+    for (const row of parsed.rows) {
+      const v = (row[h] ?? "").trim()
+      if (!v) continue
+      counts.set(v, (counts.get(v) || 0) + 1)
+    }
+    columnSamples[h] = Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([v]) => (v.length > 28 ? v.slice(0, 27) + "…" : v))
+  }
+
   return {
     name: result.name,
     headers: parsed.headers,
+    columnSamples,
     mapping,
     substantiveKeys,
     bannerDims,

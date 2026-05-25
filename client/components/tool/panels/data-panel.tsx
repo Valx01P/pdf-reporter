@@ -6,18 +6,19 @@ import type { ClientPayload } from "@/lib/client-api"
 import type { ColumnMapping } from "@/lib/psi/types"
 
 const FIELD_LABELS: { key: keyof ColumnMapping; label: string }[] = [
-  { key: "q2", label: "Q2 · Vote history" },
+  { key: "q2", label: "Vote history / frequency" },
   { key: "q3", label: "Q3 · Motivation" },
   { key: "q4", label: "Q4 · Preparedness" },
   { key: "q5", label: "Q5 · Social" },
   { key: "age", label: "Age" },
-  { key: "sex", label: "Sex" },
+  { key: "sex", label: "Sex / Gender" },
   { key: "education", label: "Education" },
   { key: "race", label: "Race / ethnicity" },
   { key: "state", label: "State" },
   { key: "region", label: "Region" },
   { key: "income", label: "Income" },
-  { key: "recall2024", label: "2024 recall" },
+  { key: "party", label: "Party ID" },
+  { key: "recall2024", label: "Past-vote recall" },
 ]
 
 export function DataPanel({

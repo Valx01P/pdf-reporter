@@ -135,7 +135,10 @@ export function rake(
         const cell = cellByResp[i]
         const observedShare = total ? (sums[cell] || 0) / total : 0
         const t = target[cell]
-        if (t == null || observedShare === 0) continue
+        // Skip cells with no positive benchmark: a 0 target only means the cell
+        // was observed-but-unbenchmarked, so raking it to 0 would zero out those
+        // respondents. Leave them at their observed share instead.
+        if (t == null || t === 0 || observedShare === 0) continue
         weights[i] *= t / observedShare
       }
       weights = normalizeMean1(weights)
@@ -151,6 +154,7 @@ export function rake(
         total += weights[i]
       }
       for (const cell of Object.keys(target)) {
+        if (!target[cell]) continue // ignore unbenchmarked (0-target) cells
         const obs = total ? (sums[cell] || 0) / total : 0
         maxDev = Math.max(maxDev, Math.abs(obs - target[cell]))
       }

@@ -19,6 +19,7 @@ import { Container } from "@/components/layout/container"
 import { StatBar, StatTile } from "@/components/ui/stat-tile"
 import { UploadPanel } from "./panels/upload-panel"
 import { DataPanel } from "./panels/data-panel"
+import { VariablesPanel } from "./panels/variables-panel"
 import { LvPanel } from "./panels/lv-panel"
 import { WeightingPanel } from "./panels/weighting-panel"
 import { ResultsPanel } from "./panels/results-panel"
@@ -27,7 +28,7 @@ import { ReportPanel } from "./panels/report-panel"
 import { ReportPreview } from "./report-preview"
 
 type View = "data" | "lv" | "weighting" | "results" | "crosstabs" | "report"
-type Mode = "preview" | "advanced"
+type Mode = "review" | "preview" | "advanced"
 
 const TABS: { id: View; label: string; icon: typeof Database; guide: string }[] = [
   { id: "data", label: "Data", icon: Database, guide: "The quality screen (speeders and straightliners removed) and the auto-detected column mapping. Reassign a column if something was detected wrong — that changes what gets weighted and tabulated." },
@@ -68,11 +69,12 @@ export function Workspace() {
     }
   }, [])
 
-  // The advanced workspace needs the analysis payload; the preview only needs
-  // the PDF (fetched inside ReportPreview), so we skip the analysis call there.
+  // The review step and advanced workspace need the analysis payload; the PDF
+  // preview only needs the PDF (fetched inside ReportPreview), so we skip the
+  // analysis call there.
   const configKey = JSON.stringify(config)
   useEffect(() => {
-    if (csvText && mode === "advanced") run(csvText, name, config)
+    if (csvText && (mode === "advanced" || mode === "review")) run(csvText, name, config)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [csvText, configKey, mode])
 
@@ -81,7 +83,8 @@ export function Workspace() {
     setConfig({})
     setPayload(null)
     setCsvText(text)
-    setMode("preview")
+    setMode("review") // land on the column/variable review page after upload
+    setView("data")
   }
 
   const onLoadSample = useCallback(async () => {
@@ -143,17 +146,71 @@ export function Workspace() {
     )
   }
 
-  // ── PDF preview (default) ──
+  // ── Column / variable review (first stop after upload) ──
+  if (mode === "review") {
+    return (
+      <section className="py-6">
+        <Container>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-tiny font-medium text-primary">
+                <span className="size-1.5 rounded-full bg-primary" />
+                PSI Pathway 3 · Dual Universe
+              </div>
+              <h2 className="truncate text-h2 font-bold">{payload?.name || name || "Survey"}</h2>
+            </div>
+            <button
+              type="button"
+              onClick={reset}
+              className="inline-flex h-9 items-center rounded-md border border-foreground/15 px-3 text-small font-medium text-foreground/70 hover:bg-foreground/5"
+            >
+              New upload
+            </button>
+          </div>
+          {error && (
+            <div className="mb-4 rounded-md border border-rose-500/30 bg-rose-500/[0.06] px-3 py-2 text-small text-rose-700 dark:text-rose-300">{error}</div>
+          )}
+          {!payload && <PanelSkeleton />}
+          {payload && (
+            <div className="animate-fade-up">
+              <VariablesPanel
+                payload={payload}
+                loading={loading}
+                csvText={csvText}
+                name={name}
+                config={config}
+                onMapping={(m) => patchConfig({ mapping: m })}
+                onApply={patchConfig}
+                onContinue={() => setMode("preview")}
+                onAdvanced={() => setMode("advanced")}
+              />
+            </div>
+          )}
+        </Container>
+      </section>
+    )
+  }
+
+  // ── PDF preview ──
   if (mode === "preview") {
     return (
       <section className="py-6">
         <Container>
-          <div className="mb-4 min-w-0">
-            <div className="flex items-center gap-2 text-tiny font-medium text-primary">
-              <span className="size-1.5 rounded-full bg-primary" />
-              PSI Pathway 3 · Dual Universe
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-tiny font-medium text-primary">
+                <span className="size-1.5 rounded-full bg-primary" />
+                PSI Pathway 3 · Dual Universe
+              </div>
+              <h2 className="truncate text-h2 font-bold">{name || "Report"}</h2>
             </div>
-            <h2 className="truncate text-h2 font-bold">{name || "Report"}</h2>
+            <button
+              type="button"
+              onClick={() => setMode("review")}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-foreground/15 px-3 text-small font-medium text-foreground/70 hover:bg-foreground/5"
+            >
+              <Database size={14} /> Columns &amp; variables
+            </button>
           </div>
           <ReportPreview csvText={csvText} name={name} config={config} onAdvanced={() => setMode("advanced")} onReset={reset} />
         </Container>
