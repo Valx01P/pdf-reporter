@@ -285,7 +285,7 @@ export function Workspace() {
         )}
 
         <div className="sticky top-0 z-20 -mx-1 mb-4 mt-4 flex flex-wrap items-center gap-2 border-b border-foreground/10 bg-background/95 px-1 py-2 backdrop-blur">
-          <div role="tablist" className="flex flex-wrap items-center gap-1 rounded-md border border-foreground/10 bg-foreground/[0.02] p-0.5">
+          <div role="tablist" className="psi-shadow flex flex-wrap items-center gap-1 rounded-md border border-foreground/10 bg-surface p-0.5">
             {TABS.map((t) => {
               const active = view === t.id
               return (
@@ -296,10 +296,10 @@ export function Workspace() {
                   title={t.guide}
                   onClick={() => setView(t.id)}
                   className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-tiny font-medium transition-colors ${
-                    active ? "bg-background text-foreground shadow-sm" : "text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground"
+                    active ? "bg-primary text-white shadow-sm" : "text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground"
                   }`}
                 >
-                  <t.icon size={12} className={active ? "text-primary" : ""} />
+                  <t.icon size={12} className={active ? "text-white" : ""} />
                   {t.label}
                 </button>
               )

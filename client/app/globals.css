@@ -3,24 +3,34 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: #fafafa;
-  --foreground: #111111;
-  --primary: #4f46e5;
+  /* PSI poll-tool palette — slate page, white surfaces, navy brand, bright-blue accent */
+  --background: #f4f7fc;
+  --surface: #ffffff;
+  --foreground: #0f172a;
+  --primary: #1d4ed8;
+  --navy: #0f2a5e;
+  --navy-2: #1e3a8a;
 }
 
 .dark {
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  --primary: #6366f1;
+  --background: #090b10;
+  --surface: #14171d;
+  --foreground: #e8edf6;
+  --primary: #3b82f6;
+  --navy: #0b1733;
+  --navy-2: #16275a;
 }
 
 @theme inline {
   --color-background: var(--background);
+  --color-surface: var(--surface);
   --color-foreground: var(--foreground);
   --color-primary: var(--primary);
+  --color-navy: var(--navy);
+  --color-navy-2: var(--navy-2);
 
   --font-sans: var(--font-inter);
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* fluid typography — single source of truth, use these only */
   --text-display: clamp(2.5rem, 1.5rem + 3vw, 3.5rem);
@@ -119,6 +129,23 @@ input[disabled] {
 button.inline-flex,
 a.inline-flex {
   white-space: nowrap;
+}
+
+/* PSI poll-tool chrome — navy gradients + soft card shadow from the mockups. */
+.psi-topbar {
+  background: linear-gradient(135deg, #070f2b, var(--navy));
+}
+.psi-flagship {
+  background: linear-gradient(135deg, #070f2b 0%, var(--navy) 55%, var(--navy-2) 100%);
+}
+.psi-shadow {
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.07), 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.psi-shadow-lg {
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+}
+.dark .psi-shadow {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 @keyframes toplines-fade-up {

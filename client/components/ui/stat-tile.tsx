@@ -15,7 +15,7 @@ export function StatTile({
   title?: string
 }) {
   return (
-    <div title={title} className="rounded-lg border border-foreground/10 bg-foreground/[0.02] px-3.5 py-3">
+    <div title={title} className="psi-shadow rounded-lg border border-foreground/10 bg-surface px-3.5 py-3">
       <div className="flex items-center gap-1.5">
         {Icon && <Icon size={11} className="text-primary" />}
         <span className="text-tiny font-semibold uppercase tracking-wider text-foreground/50">{label}</span>
