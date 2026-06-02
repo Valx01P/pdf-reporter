@@ -8,6 +8,7 @@ import {
   Database,
   FileText,
   HelpCircle,
+  LayoutDashboard,
   Loader2,
   Scale,
   Table2,
@@ -18,6 +19,7 @@ import { ApiError, loadSample, runPipeline, type ClientPayload, type RunConfig }
 import { Container } from "@/components/layout/container"
 import { StatBar, StatTile } from "@/components/ui/stat-tile"
 import { UploadPanel } from "./panels/upload-panel"
+import { DashboardPanel } from "./panels/dashboard-panel"
 import { DataPanel } from "./panels/data-panel"
 import { VariablesPanel } from "./panels/variables-panel"
 import { LvPanel } from "./panels/lv-panel"
@@ -27,10 +29,11 @@ import { CrosstabPanel } from "./panels/crosstab-panel"
 import { ReportPanel } from "./panels/report-panel"
 import { ReportPreview } from "./report-preview"
 
-type View = "data" | "lv" | "weighting" | "results" | "crosstabs" | "report"
+type View = "overview" | "data" | "lv" | "weighting" | "results" | "crosstabs" | "report"
 type Mode = "review" | "preview" | "advanced"
 
 const TABS: { id: View; label: string; icon: typeof Database; guide: string }[] = [
+  { id: "overview", label: "Overview", icon: LayoutDashboard, guide: "The poll-at-a-glance dashboard: the auto-detected ballot question as a flagship (leader and margin), candidate topline tiles with the RV→LV movement, headline diagnostics, and the ballot crossed by any demographic. Switch the universe or pick a different question to drive the dashboard." },
   { id: "data", label: "Data", icon: Database, guide: "The quality screen (speeders and straightliners removed) and the auto-detected column mapping. Reassign a column if something was detected wrong — that changes what gets weighted and tabulated." },
   { id: "lv", label: "Likely Voter", icon: Users, guide: "The turnout model: the P(vote) distribution, vote-history buckets, and editable Q3/Q4/Q5 weight maps, projected turnout, and steepness (k). Raising turnout or weights pulls more respondents into the likely electorate; the whole report recomputes." },
   { id: "weighting", label: "Benchmarks & Weighting", icon: Scale, guide: "Choose the weighting set (A/B/C) and review the raking diagnostics, convergence log, recall calibration, and SOCAL target derivation. The set determines which demographics the sample is weighted to." },
@@ -49,7 +52,7 @@ export function Workspace() {
   const [payload, setPayload] = useState<ClientPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [view, setView] = useState<View>("data")
+  const [view, setView] = useState<View>("overview")
   const [mode, setMode] = useState<Mode>("preview")
   const [helpOpen, setHelpOpen] = useState(false)
   const reqId = useRef(0)
@@ -84,7 +87,7 @@ export function Workspace() {
     setPayload(null)
     setCsvText(text)
     setMode("review") // land on the column/variable review page after upload
-    setView("data")
+    setView("overview")
   }
 
   const onLoadSample = useCallback(async () => {
@@ -282,7 +285,7 @@ export function Workspace() {
         )}
 
         <div className="sticky top-0 z-20 -mx-1 mb-4 mt-4 flex flex-wrap items-center gap-2 border-b border-foreground/10 bg-background/95 px-1 py-2 backdrop-blur">
-          <div role="tablist" className="flex flex-wrap items-center gap-1 rounded-md border border-foreground/10 bg-foreground/[0.02] p-0.5">
+          <div role="tablist" className="psi-shadow flex flex-wrap items-center gap-1 rounded-md border border-hairline bg-surface p-0.5">
             {TABS.map((t) => {
               const active = view === t.id
               return (
@@ -293,10 +296,10 @@ export function Workspace() {
                   title={t.guide}
                   onClick={() => setView(t.id)}
                   className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-tiny font-medium transition-colors ${
-                    active ? "bg-background text-foreground shadow-sm" : "text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground"
+                    active ? "bg-primary text-white shadow-sm" : "text-foreground/60 hover:bg-foreground/[0.04] hover:text-foreground"
                   }`}
                 >
-                  <t.icon size={12} className={active ? "text-primary" : ""} />
+                  <t.icon size={12} className={active ? "text-white" : ""} />
                   {t.label}
                 </button>
               )
@@ -333,6 +336,7 @@ export function Workspace() {
         {!payload && loading && <PanelSkeleton />}
         {payload && (
           <div className="animate-fade-up">
+            {view === "overview" && <DashboardPanel payload={payload} csvText={csvText} name={name} config={config} />}
             {view === "data" && <DataPanel payload={payload} onMapping={(m) => patchConfig({ mapping: m })} />}
             {view === "lv" && <LvPanel payload={payload} onApply={patchConfig} />}
             {view === "weighting" && <WeightingPanel payload={payload} onApply={patchConfig} />}
