@@ -1,29 +1,23 @@
-// "light" tone is for placement on the navy topbar; "default" keeps the brand
-// accent (primary) used elsewhere on light/dark surfaces.
-type Tone = "default" | "light"
-
-export function Logo({ size = 28, tone = "default" }: { size?: number; tone?: Tone }) {
-  const rect = tone === "light" ? "#93c5fd" : undefined
-  const bars = tone === "light" ? "#0f2a5e" : "#ffffff"
+// Theme-aware brand. Light mode: blue mark + white bars + navy wordmark (reads on
+// the white top bar). Dark mode: light-blue mark + navy bars + light-blue wordmark
+// (reads on the navy top bar). Driven by `dark:` classes so it never flashes.
+export function Logo({ size = 28 }: { size?: number }) {
+  const bars = "fill-white dark:fill-[#0f2a5e]"
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <rect width="32" height="32" rx="8" className={tone === "light" ? "" : "fill-primary"} fill={rect} />
-      <rect x="8" y="9" width="16" height="3.2" rx="1.6" fill={bars} />
-      <rect x="8" y="14.4" width="11" height="3.2" rx="1.6" fill={bars} fillOpacity="0.85" />
-      <rect x="8" y="19.8" width="7" height="3.2" rx="1.6" fill={bars} fillOpacity="0.7" />
+      <rect width="32" height="32" rx="8" className="fill-primary dark:fill-[#93c5fd]" />
+      <rect x="8" y="9" width="16" height="3.2" rx="1.6" className={bars} />
+      <rect x="8" y="14.4" width="11" height="3.2" rx="1.6" className={bars} fillOpacity="0.85" />
+      <rect x="8" y="19.8" width="7" height="3.2" rx="1.6" className={bars} fillOpacity="0.7" />
     </svg>
   )
 }
 
-export function Wordmark({ size = 28, tone = "default" }: { size?: number; tone?: Tone }) {
+export function Wordmark({ size = 28 }: { size?: number }) {
   return (
     <span className="flex items-center gap-2">
-      <Logo size={size} tone={tone} />
-      <span
-        className={`font-mono text-h3 font-bold tracking-tight ${
-          tone === "light" ? "text-[#93c5fd]" : "text-foreground"
-        }`}
-      >
+      <Logo size={size} />
+      <span className="font-mono text-h3 font-bold tracking-tight text-navy dark:text-[#93c5fd]">
         Toplines
       </span>
     </span>
