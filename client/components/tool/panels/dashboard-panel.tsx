@@ -111,7 +111,7 @@ export function DashboardPanel({
         {summary.ranked.map((r) => (
           <div
             key={r.label}
-            className="psi-shadow relative overflow-hidden rounded-xl border border-foreground/10 bg-surface px-3.5 py-3"
+            className="psi-shadow relative overflow-hidden rounded-xl border border-hairline bg-surface px-3.5 py-3"
           >
             <span className="absolute inset-x-0 bottom-0 h-[3px]" style={{ background: r.color }} />
             <div className="truncate text-tiny font-semibold" style={{ color: r.color }} title={r.label}>
@@ -273,7 +273,7 @@ function DiagTile({
   sub: string
 }) {
   return (
-    <div className="psi-shadow rounded-lg border border-foreground/10 bg-surface px-3 py-2.5">
+    <div className="psi-shadow rounded-lg border border-hairline bg-surface px-3 py-2.5">
       <div className="flex items-center gap-1.5">
         <Icon size={11} className="text-primary" />
         <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground/45">{label}</span>

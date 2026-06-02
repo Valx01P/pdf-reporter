@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`psi-shadow rounded-xl border border-foreground/10 bg-surface ${className}`}>{children}</div>
+  return <div className={`psi-shadow rounded-xl border border-hairline bg-surface ${className}`}>{children}</div>
 }
 
 export function CardHeader({

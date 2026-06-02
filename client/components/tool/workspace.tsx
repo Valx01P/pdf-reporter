@@ -285,7 +285,7 @@ export function Workspace() {
         )}
 
         <div className="sticky top-0 z-20 -mx-1 mb-4 mt-4 flex flex-wrap items-center gap-2 border-b border-foreground/10 bg-background/95 px-1 py-2 backdrop-blur">
-          <div role="tablist" className="psi-shadow flex flex-wrap items-center gap-1 rounded-md border border-foreground/10 bg-surface p-0.5">
+          <div role="tablist" className="psi-shadow flex flex-wrap items-center gap-1 rounded-md border border-hairline bg-surface p-0.5">
             {TABS.map((t) => {
               const active = view === t.id
               return (
