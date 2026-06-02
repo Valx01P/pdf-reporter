@@ -180,7 +180,7 @@ export function ExportConfirmButton({ label, hint, icon: IconCmp, title, variant
           className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
         >
           <button type="button" aria-label="Close preview" onClick={close} className="absolute inset-0 cursor-default bg-black/45 backdrop-blur-sm" />
-          <div className="animate-fade-up relative flex max-h-[calc(100dvh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-foreground/10 bg-background shadow-2xl sm:max-h-[calc(100dvh-3rem)]">
+          <div className="animate-fade-up relative flex max-h-[calc(100dvh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-hairline bg-surface shadow-2xl sm:max-h-[calc(100dvh-3rem)]">
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-foreground/10 px-4 py-3">
               <div className="flex min-w-0 items-center gap-2">
                 <IconCmp size={15} className="shrink-0 text-primary" />

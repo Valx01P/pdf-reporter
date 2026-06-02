@@ -39,8 +39,8 @@ export function UploadPanel({
           const f = e.dataTransfer.files?.[0]
           if (f) readFile(f)
         }}
-        className={`flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-colors ${
-          drag ? "border-primary bg-primary/[0.04]" : "border-foreground/15 bg-foreground/[0.02]"
+        className={`psi-shadow flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed bg-surface px-6 py-12 text-center transition-colors ${
+          drag ? "border-primary" : "border-hairline"
         }`}
       >
         <span className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
