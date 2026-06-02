@@ -4,9 +4,8 @@
 
 :root {
   /* PSI poll-tool palette — slate page, white surfaces, navy brand, bright-blue accent.
-     The page sits a clear step below the white card surface so cards/tiles read as
-     floating panels in light mode (otherwise everything looks flat and washed out). */
-  --background: #e8edf5;
+     Card/tile separation comes from the --hairline border + shadow, not a darker page. */
+  --background: #f4f7fc;
   --surface: #ffffff;
   --foreground: #0f172a;
   --primary: #1d4ed8;
