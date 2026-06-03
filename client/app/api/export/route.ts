@@ -7,6 +7,7 @@ import {
   buildToplinesCsv,
   buildWorkbook,
 } from "@/lib/exports"
+import { detectAggregate, serializeToplinesCsv } from "@/lib/psi/aggregate-parse"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -47,6 +48,25 @@ export async function POST(req: Request) {
   const format: Format = FORMATS.includes(body.format as Format) ? (body.format as Format) : "csv"
   try {
     const { csvText, banners, ...config } = body
+
+    // Aggregate upload (tabbook or toplines): there are no respondents to
+    // re-tabulate, so the only faithful export is the data itself, normalized
+    // back through its own writer.
+    const aggregate = detectAggregate(csvText, config.name || "Tabbook")
+    if (aggregate) {
+      const aggBase = slug(aggregate.tabbook.name)
+      if (aggregate.kind === "toplines") {
+        return csvResponse(serializeToplinesCsv(aggregate.tabbook), `${aggBase}-toplines.csv`)
+      }
+      if (format === "csv" || format === "tabbook-rv" || format === "tabbook-lv" || format === "xlsx") {
+        return csvResponse(buildTabbookCsv(aggregate.tabbook), `${aggBase}-${aggregate.tabbook.universe}-tabbook.csv`)
+      }
+      return Response.json(
+        { error: "That export needs respondent-level data. An aggregate file can only be re-exported in its own format." },
+        { status: 422 },
+      )
+    }
+
     const full = runAnalysis(csvText, config)
     const base = slug(full.result.name)
 

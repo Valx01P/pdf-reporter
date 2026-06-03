@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { buildClientPayload, runAnalysis, type RunConfig } from "@/lib/psi/service"
+import { detectAggregate } from "@/lib/psi/aggregate-parse"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -23,6 +24,13 @@ export async function POST(req: Request) {
   }
   try {
     const { csvText, ...config } = body
+    // An already-processed export (tabbook or tidy toplines) has no respondent
+    // rows to weight or tabulate. Detect it and read it back into a Tabbook
+    // instead of misparsing its labels as survey questions / demographic columns.
+    const aggregate = detectAggregate(csvText, config.name || "Tabbook")
+    if (aggregate) {
+      return NextResponse.json({ aggregate: true, kind: aggregate.kind, tabbook: aggregate.tabbook })
+    }
     const full = runAnalysis(csvText, config)
     return NextResponse.json({ payload: buildClientPayload(full) })
   } catch (e) {

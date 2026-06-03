@@ -11,7 +11,7 @@ import type { Tabbook } from "@/lib/types"
 // One wide Tabbook grid: response labels + Total sticky on the left, every banner
 // group to the right. The grouped header, column header and (unweighted n) row
 // are shared (sticky); each question is a labelled block of response rows.
-function TabbookGrid({ tb }: { tb: Tabbook }) {
+export function TabbookGrid({ tb }: { tb: Tabbook }) {
   // column index → whether it starts a new banner group (for vertical dividers)
   const groupStart = useMemo(() => {
     const starts = new Set<number>()

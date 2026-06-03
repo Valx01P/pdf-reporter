@@ -1,7 +1,11 @@
 import { buildAllCrosstabs, buildClientPayload, buildUncertainty, runAnalysis, type RunConfig } from "@/lib/psi/service"
 import { buildReportPdf } from "@/lib/pdf"
 import { templatePsiSummary } from "@/lib/ai"
+import { looksLikeAggregate } from "@/lib/psi/aggregate-parse"
 import type { AiSummary } from "@/lib/types"
+
+const AGGREGATE_MESSAGE =
+  "This file is already-processed results (a tabbook or toplines export), not respondent-level data — so the Pathway 3 methodology report can't be rebuilt from it. It opens directly in the results viewer; to generate a full report, upload the respondent-level CSV (one row per person)."
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -27,6 +31,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Invalid JSON body." }, { status: 400 })
   }
   if (!body.csvText?.trim()) return Response.json({ error: "Provide a CSV in `csvText`." }, { status: 400 })
+  if (looksLikeAggregate(body.csvText)) return Response.json({ error: AGGREGATE_MESSAGE }, { status: 422 })
   try {
     const { csvText, summary, includeCrosstabs, includeUncertainty, meta, ...config } = body
     const full = runAnalysis(csvText, config)

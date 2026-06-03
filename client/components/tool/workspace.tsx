@@ -26,11 +26,13 @@ import { LvPanel } from "./panels/lv-panel"
 import { WeightingPanel } from "./panels/weighting-panel"
 import { ResultsPanel } from "./panels/results-panel"
 import { CrosstabPanel } from "./panels/crosstab-panel"
+import { AggregateTabbookPanel } from "./panels/aggregate-tabbook-panel"
 import { ReportPanel } from "./panels/report-panel"
 import { ReportPreview } from "./report-preview"
+import type { Tabbook } from "@/lib/types"
 
 type View = "overview" | "data" | "lv" | "weighting" | "results" | "crosstabs" | "report"
-type Mode = "review" | "preview" | "advanced"
+type Mode = "review" | "preview" | "advanced" | "aggregate"
 
 const TABS: { id: View; label: string; icon: typeof Database; guide: string }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard, guide: "The poll-at-a-glance dashboard: the auto-detected ballot question as a flagship (leader and margin), candidate topline tiles with the RV→LV movement, headline diagnostics, and the ballot crossed by any demographic. Switch the universe or pick a different question to drive the dashboard." },
@@ -50,6 +52,8 @@ export function Workspace() {
   const [name, setName] = useState("")
   const [config, setConfig] = useState<RunConfig>({})
   const [payload, setPayload] = useState<ClientPayload | null>(null)
+  const [tabbook, setTabbook] = useState<Tabbook | null>(null)
+  const [aggregateKind, setAggregateKind] = useState<"tabbook" | "toplines">("tabbook")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [view, setView] = useState<View>("overview")
@@ -63,8 +67,19 @@ export function Workspace() {
     setLoading(true)
     setError(null)
     try {
-      const { payload } = await runPipeline({ csvText: text, name: studyName, ...cfg })
-      if (id === reqId.current) setPayload(payload)
+      const res = await runPipeline({ csvText: text, name: studyName, ...cfg })
+      if (id !== reqId.current) return
+      // An aggregate tabbook upload returns the parsed grid instead of a payload —
+      // there are no respondents to run the methodology pipeline on.
+      if (res.aggregate && res.tabbook) {
+        setTabbook(res.tabbook)
+        setAggregateKind(res.kind ?? "tabbook")
+        setPayload(null)
+        setMode("aggregate")
+      } else if (res.payload) {
+        setTabbook(null)
+        setPayload(res.payload)
+      }
     } catch (e) {
       if (id === reqId.current) setError(e instanceof ApiError ? e.message : "Something went wrong processing the survey.")
     } finally {
@@ -85,6 +100,7 @@ export function Workspace() {
     setName(studyName)
     setConfig({})
     setPayload(null)
+    setTabbook(null)
     setCsvText(text)
     setMode("review") // land on the column/variable review page after upload
     setView("overview")
@@ -123,6 +139,7 @@ export function Workspace() {
   const reset = () => {
     setCsvText("")
     setPayload(null)
+    setTabbook(null)
     setError(null)
     setName("")
     setConfig({})
@@ -189,6 +206,35 @@ export function Workspace() {
               />
             </div>
           )}
+        </Container>
+      </section>
+    )
+  }
+
+  // ── Aggregate tabbook (an already-processed crosstab export was uploaded) ──
+  if (mode === "aggregate" && tabbook) {
+    return (
+      <section className="py-6">
+        <Container>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-tiny font-medium text-primary">
+                <span className="size-1.5 rounded-full bg-primary" />
+                {aggregateKind === "toplines" ? "Toplines viewer" : `Tabbook viewer · ${tabbook.universe}`}
+              </div>
+              <h2 className="truncate text-h2 font-bold">{tabbook.name || name || "Results"}</h2>
+            </div>
+            <button
+              type="button"
+              onClick={reset}
+              className="inline-flex h-9 items-center rounded-md border border-foreground/15 px-3 text-small font-medium text-foreground/70 hover:bg-foreground/5"
+            >
+              New upload
+            </button>
+          </div>
+          <div className="animate-fade-up">
+            <AggregateTabbookPanel tabbook={tabbook} kind={aggregateKind} csvText={csvText} name={name} config={config} />
+          </div>
         </Container>
       </section>
     )

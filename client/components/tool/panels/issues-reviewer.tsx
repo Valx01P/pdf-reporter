@@ -37,7 +37,12 @@ function noticeTitle(w: string): string {
 // Warnings already represented by a fixable map issue — don't double-list them.
 const REDUNDANT = /Q3\/Q4\/Q5|likely-voter screen questions|recall column|demographic columns were detected|Map age, sex/i
 
-function buildIssues(payload: ClientPayload, dismissed: Set<string>): Issue[] {
+// `ackNotices` is the durable signal that the one-click resolver acknowledged
+// every disclosure. Notices are reworded/reordered when a mapping change re-runs
+// the pipeline, so a text-keyed dismiss would let them resurface — this flag keeps
+// them suppressed for the dataset. Map issues use stable `map:<field>` ids, so the
+// per-issue `dismissed` set is enough for those.
+function buildIssues(payload: ClientPayload, dismissed: Set<string>, ackNotices: boolean): Issue[] {
   const out: Issue[] = []
   for (const field of FIX_ORDER) {
     if (field === "region") {
@@ -47,7 +52,7 @@ function buildIssues(payload: ClientPayload, dismissed: Set<string>): Issue[] {
     out.push({ id: `map:${field}`, kind: "map", field, label: m.label, detail: m.detail, severity: m.severity, example: m.example })
   }
   for (const w of payload.warnings) {
-    if (REDUNDANT.test(w)) continue
+    if (ackNotices || REDUNDANT.test(w)) continue
     const sev: "warn" | "info" = /unweighted|design effect|coerced|small/i.test(w) ? "warn" : "info"
     out.push({ id: `notice:${w.slice(0, 40)}`, kind: "notice", severity: sev, title: noticeTitle(w), detail: w })
   }
@@ -68,13 +73,28 @@ export function IssuesReviewer({
   onMapping: (m: Partial<ColumnMapping>) => void
 }) {
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  const [ackNotices, setAckNotices] = useState(false)
   const [selected, setSelected] = useState(0)
   const [chosen, setChosen] = useState<Record<string, string>>({})
   const [suggestions, setSuggestions] = useState<Record<string, MappingSuggestion>>({})
   const [aiState, setAiState] = useState<"idle" | "loading" | "done" | "off">("idle")
+  // Summary of what the one-click resolver did, shown until the next edit.
+  const [resolution, setResolution] = useState<{ applied: { field: string; column: string }[]; notInData: string[]; ack: number; critical: string[] } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const issues = useMemo(() => buildIssues(payload, dismissed), [payload, dismissed])
+  // A new dataset starts clean. Keyed on csvText/name, NOT payload — payload is
+  // replaced on every pipeline re-run (e.g. after applying a mapping), and those
+  // must not wipe what the resolver just dismissed.
+  useEffect(() => {
+    setDismissed(new Set())
+    setAckNotices(false)
+    setResolution(null)
+    setSuggestions({})
+    setChosen({})
+    setAiState("idle")
+  }, [csvText, name])
+
+  const issues = useMemo(() => buildIssues(payload, dismissed, ackNotices), [payload, dismissed, ackNotices])
   const mapIssues = issues.filter((i) => i.kind === "map")
 
   // Keep selection in range as issues resolve.
@@ -86,36 +106,74 @@ export function IssuesReviewer({
 
   const applyMap = (field: string, column: string) => {
     if (!column) return
+    setResolution(null)
     onMapping({ ...payload.mapping, [field]: column })
     // The re-run drops this issue; advance toward the next one.
     setSelected((s) => Math.min(s, Math.max(0, issues.length - 2)))
   }
 
+  // One click resolves the whole review: apply every confident column match,
+  // mark genuinely-absent OPTIONAL inputs as "not in your data" (the pipeline
+  // runs without them), and acknowledge the unfixable disclosures. Core
+  // demographics that are truly missing are left flagged — never invented.
+  //
+  // The column-suggestion call is best-effort: if it fails (timeout / 5xx), we
+  // STILL resolve everything else, so one click never leaves the whole list
+  // standing. Notices are acknowledged durably via `ackNotices` so a pipeline
+  // re-run (triggered by the mappings we just applied) can't resurface them.
   const runAi = async () => {
-    if (!mapIssues.length) return
+    if (!issues.length) return
     setAiState("loading")
-    try {
-      const { ai, suggestions: sug } = await fetchMappingSuggestions({
-        csvText,
-        name,
-        ...config,
-        fields: mapIssues.map((i) => (i as Extract<Issue, { kind: "map" }>).field),
-      })
-      const byField: Record<string, MappingSuggestion> = {}
-      const preChosen: Record<string, string> = {}
-      for (const s of sug) {
-        byField[s.field] = s
-        if (s.column) preChosen[s.field] = s.column
+    setResolution(null)
+
+    // 1) Best-effort: get column suggestions for the unmapped fields. The route
+    //    has a deterministic keyword fallback, so this returns matches even with
+    //    no API key — but a hard failure here must not block step 2.
+    const patch: Record<string, string> = {}
+    let aiFailed = false
+    if (mapIssues.length) {
+      try {
+        const { suggestions: sug } = await fetchMappingSuggestions({
+          csvText,
+          name,
+          ...config,
+          fields: mapIssues.map((i) => (i as Extract<Issue, { kind: "map" }>).field),
+        })
+        const byField: Record<string, MappingSuggestion> = {}
+        for (const s of sug) {
+          byField[s.field] = s
+          if (s.column) patch[s.field] = s.column
+        }
+        setSuggestions(byField)
+      } catch {
+        aiFailed = true
       }
-      setSuggestions(byField)
-      setChosen((c) => ({ ...preChosen, ...c })) // keep any manual choices
-      setAiState(ai ? "done" : "off")
-      // jump to the first fixable issue so the user can accept
-      const firstFix = issues.findIndex((i) => i.kind === "map")
-      if (firstFix >= 0) setSelected(firstFix)
-    } catch {
-      setAiState("off")
     }
+
+    // 2) Deterministic resolution — ALWAYS runs. Apply matched columns, mark
+    //    absent OPTIONAL inputs not-in-data, keep missing CORE demographics
+    //    flagged (can't be invented), and acknowledge every disclosure.
+    const applied: { field: string; column: string }[] = []
+    const notInData: string[] = []
+    const critical: string[] = []
+    const toDismiss: string[] = []
+    for (const i of mapIssues) {
+      const it = i as Extract<Issue, { kind: "map" }>
+      if (patch[it.field]) applied.push({ field: it.field, column: patch[it.field] })
+      else if (it.severity === "warn") {
+        notInData.push(it.label)
+        toDismiss.push(it.id) // stable map:<field> id — survives the re-run below
+      } else critical.push(it.label)
+    }
+    const ack = issues.filter((i) => i.kind === "notice").length
+    if (toDismiss.length) setDismissed((d) => new Set([...d, ...toDismiss]))
+    if (ack) setAckNotices(true)
+    if (applied.length) onMapping({ ...payload.mapping, ...patch })
+    setResolution({ applied, notInData, ack, critical })
+
+    // "off" surfaces the manual-mapping hint only when real work remains: a core
+    // demographic the AI couldn't find, or the call failed with nothing applied.
+    setAiState(critical.length || (aiFailed && mapIssues.length && !applied.length) ? "off" : "done")
   }
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -141,8 +199,19 @@ export function IssuesReviewer({
 
   if (!issues.length) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/[0.06] px-4 py-3 text-small text-emerald-700 dark:text-emerald-300">
-        <CircleCheck size={16} /> All clear — no data issues to review. Your columns are mapped and the sample is ready.
+      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.06] px-4 py-3 text-small text-emerald-700 dark:text-emerald-300">
+        <div className="flex items-center gap-2 font-medium">
+          <CircleCheck size={16} /> All clear — your columns are mapped and the sample is ready.
+        </div>
+        {resolution && (resolution.applied.length > 0 || resolution.notInData.length > 0 || resolution.ack > 0) && (
+          <ul className="mt-1.5 ml-6 list-disc space-y-0.5 text-tiny text-emerald-700/80 dark:text-emerald-300/80">
+            {resolution.applied.length > 0 && (
+              <li>Mapped {resolution.applied.length}: {resolution.applied.map((a) => `${FIELD_META[a.field]?.label ?? a.field} → ${a.column.length > 28 ? a.column.slice(0, 27) + "…" : a.column}`).join(" · ")}</li>
+            )}
+            {resolution.notInData.length > 0 && <li>Marked not-in-data (optional, model proceeds without): {resolution.notInData.join(" · ")}</li>}
+            {resolution.ack > 0 && <li>Acknowledged {resolution.ack} disclosure{resolution.ack === 1 ? "" : "s"} (kept in the report methodology)</li>}
+          </ul>
+        )}
       </div>
     )
   }
@@ -164,24 +233,54 @@ export function IssuesReviewer({
         </div>
         <div className="flex items-center gap-2">
           <span className="hidden text-tiny text-foreground/40 sm:inline">↑↓ move · Enter apply</span>
-          {mapIssues.length > 0 && (
-            <button
-              type="button"
-              onClick={runAi}
-              disabled={aiState === "loading"}
-              title="Let the AI suggest a column for each unmapped field; you review and accept."
-              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-tiny font-medium text-white hover:opacity-90 disabled:opacity-50"
-            >
-              {aiState === "loading" ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-              Fix with AI
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={runAi}
+            disabled={aiState === "loading"}
+            title="Resolve every issue in one click: apply confident column matches, mark absent optional inputs as not-in-data, and acknowledge disclosures. Missing core demographics stay flagged — never invented."
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-tiny font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {aiState === "loading" ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+            Fix with AI
+          </button>
         </div>
       </div>
 
       {aiState === "off" && (
         <div className="border-b border-foreground/10 bg-amber-500/[0.05] px-4 py-1.5 text-tiny text-foreground/60">
           AI didn&apos;t find a confident match (or isn&apos;t configured). Map these manually below — pick the right column and Apply.
+        </div>
+      )}
+
+      {resolution && (resolution.applied.length > 0 || resolution.notInData.length > 0 || resolution.ack > 0 || resolution.critical.length > 0) && (
+        <div className="border-b border-foreground/10 bg-emerald-500/[0.05] px-4 py-2 text-tiny text-foreground/70">
+          <div className="flex items-start gap-1.5">
+            <CircleCheck size={13} className="mt-0.5 shrink-0 text-emerald-500" />
+            <div className="flex flex-col gap-0.5">
+              {resolution.applied.length > 0 && (
+                <span>
+                  <span className="font-medium text-foreground/85">Mapped {resolution.applied.length}:</span>{" "}
+                  {resolution.applied.map((a) => `${FIELD_META[a.field]?.label ?? a.field} → ${a.column.length > 28 ? a.column.slice(0, 27) + "…" : a.column}`).join(" · ")}
+                </span>
+              )}
+              {resolution.notInData.length > 0 && (
+                <span>
+                  <span className="font-medium text-foreground/85">Marked not in your data ({resolution.notInData.length}):</span>{" "}
+                  {resolution.notInData.join(" · ")} — these are optional, the model proceeds without them.
+                </span>
+              )}
+              {resolution.ack > 0 && (
+                <span>
+                  <span className="font-medium text-foreground/85">Acknowledged {resolution.ack} disclosure{resolution.ack === 1 ? "" : "s"}</span> — still noted in the report methodology.
+                </span>
+              )}
+              {resolution.critical.length > 0 && (
+                <span className="text-rose-600 dark:text-rose-400">
+                  {resolution.critical.length} core demographic{resolution.critical.length === 1 ? "" : "s"} ({resolution.critical.join(", ")}) {resolution.critical.length === 1 ? "isn't" : "aren't"} in your data and can&apos;t be invented — map manually or upload data that includes {resolution.critical.length === 1 ? "it" : "them"}.
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

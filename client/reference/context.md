@@ -30,7 +30,7 @@ but the registered voter weighting is not converging properly
 === latest messages vvv ===
 
 >go through the code
-it's not pikcing up some of the vairables
+it's not picking up some of the vairables
 in the columns
 use this dataset (client/reference/likelyvotersnational - Total-2.csv)
 

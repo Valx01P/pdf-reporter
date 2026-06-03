@@ -30,7 +30,12 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
-export function runPipeline(args: RunArgs): Promise<{ payload: ClientPayload }> {
+// Returns a respondent-level analysis `payload`, OR — when the upload is an
+// already-processed export (tabbook or tidy toplines) — `aggregate: true` plus
+// the parsed `tabbook` and which `kind` of aggregate it was.
+export function runPipeline(
+  args: RunArgs,
+): Promise<{ payload?: ClientPayload; aggregate?: boolean; kind?: "tabbook" | "toplines"; tabbook?: Tabbook }> {
   return postJson("/api/run", args)
 }
 

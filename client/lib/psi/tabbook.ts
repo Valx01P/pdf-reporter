@@ -14,7 +14,7 @@ import type { Tabbook, TabbookColumn, TabbookGroup, TabbookQuestion, TabbookRow,
 // Net / summary rows beneath a question's options, computed per banner column by
 // summing the relevant option column-%. Detection mirrors the Wisconsin tabbook:
 // approval, likelihood, and ballot (horse-race) questions each get a net block.
-function summaryRowsFor(rows: TabbookRow[], ncol: number): TabbookSummaryRow[] | undefined {
+export function summaryRowsFor(rows: TabbookRow[], ncol: number): TabbookSummaryRow[] | undefined {
   if (rows.length < 2) return undefined
   const norm = rows.map((r) => normalizeLabel(r.label))
   const count = (pred: (l: string) => boolean) => norm.filter(pred).length
