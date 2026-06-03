@@ -70,6 +70,14 @@ export interface FullResult {
 const ID_DUR_RE =
   /^(respondent_?id|resp_?id|.*_id|id|uuid|guid|row_?id|record_?id|index|seq|timestamp|datetime|date|time|start(ed)?|end(ed)?|submitted(_?at)?|created_?at|completed_?at|duration(_?sec(onds)?)?|loi|completion(_?time)?|phone|mobile|cell|email|e_?mail|name|first_?name|last_?name|ip|ip_?address|user_?agent|weight|weights|wt|final_?weight)$/i
 
+// Administrative / geographic / internal-scoring columns that ride along in PSI
+// exports but are never substantive survey questions — they only bloat the
+// report (a county or ZIP "question" is hundreds of bars; a propensity score is
+// noise). Anchored to whole header names so a real question that merely mentions
+// "county" or "weight" in its (long) prompt is never caught.
+const NON_QUESTION_RE =
+  /^(us[_\s]?zip([_\s]?code)?|zip([_\s]?code)?|postal[_\s]?code|us[_\s]?county|us[_\s]?statistical[_\s]?area.*|cbsa|msa|dma|metro([_\s]?area)?|[\w\s]*[_\s]fips|lat(itude)?|lon(g(itude)?)?|lv[_\s]?score|propensity([_\s]?score)?|turnout[_\s]?score|p[_(]?vote\)?|weight[_\s]?\w+|[\w\s]*[_\s]weight)$/i
+
 export function runAnalysis(csvText: string, config: RunConfig): FullResult {
   const parsed = parseCsv(csvText)
   if (!parsed.rows.length) throw new Error("No data rows found. The CSV needs a header row and at least one response row.")
@@ -77,7 +85,7 @@ export function runAnalysis(csvText: string, config: RunConfig): FullResult {
   const mapping: ColumnMapping = { ...autoDetect(parsed), ...stripEmpty(config.mapping) }
   const mapped = new Set(Object.values(mapping).filter(Boolean) as string[])
   const substantiveKeys = parsed.headers.filter(
-    (h) => !mapped.has(h) && !ID_DUR_RE.test(h) && !isIdLike(parsed.rows, h),
+    (h) => !mapped.has(h) && !ID_DUR_RE.test(h) && !NON_QUESTION_RE.test(h) && !isIdLike(parsed.rows, h),
   )
 
   const q3Map = config.q3Map || buildWeightMap(parsed.rows, mapping.q3, Q3_MOTIVATION)

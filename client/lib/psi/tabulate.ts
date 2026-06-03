@@ -10,6 +10,9 @@ import type { DerivedRespondent } from "./types"
 
 const round1 = (x: number) => Math.round(x * 10) / 10
 
+// Most options shown for a free categorical question; the rest fold into "Other".
+const MAX_CATEGORICAL_OPTIONS = 12
+
 // Demographic banner dimensions available for crosstabs, beyond raw question columns.
 export const BANNER_DIMS = [
   { key: "ageBucket", label: "Age" },
@@ -134,7 +137,30 @@ export function tabulateQuestion(
     return base
   }
 
-  base.options = toOpts(distinct.sort((a, b) => (buckets.get(b)!.weighted - buckets.get(a)!.weighted)))
+  // Categorical: rank by weighted share and fold a long tail into a single
+  // "Other" bucket. A high-cardinality column (county, CBSA, ZIP, free text that
+  // slipped past open-ended detection) would otherwise emit one option — and one
+  // chart bar — per distinct value, blowing the report up to thousands of pages.
+  const sorted = distinct.sort((a, b) => buckets.get(b)!.weighted - buckets.get(a)!.weighted)
+  if (sorted.length > MAX_CATEGORICAL_OPTIONS + 1) {
+    const head = sorted.slice(0, MAX_CATEGORICAL_OPTIONS)
+    const tail = sorted.slice(MAX_CATEGORICAL_OPTIONS)
+    const other = tail.reduce(
+      (acc, l) => {
+        const b = buckets.get(l)!
+        acc.count += b.count
+        acc.weighted += b.weighted
+        return acc
+      },
+      { count: 0, weighted: 0 },
+    )
+    base.options = [
+      ...toOpts(head),
+      { label: `Other (${tail.length} more)`, count: other.count, weighted: other.weighted, pct: weightedAnswered ? (other.weighted / weightedAnswered) * 100 : 0 },
+    ]
+  } else {
+    base.options = toOpts(sorted)
+  }
   return base
 }
 

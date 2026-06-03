@@ -5,16 +5,18 @@
 // the numbers. Returns a Buffer.
 
 import PDFDocument from "pdfkit"
-import type { AiSummary, Crosstab, Question } from "./types"
+import type { AiSummary, Crosstab, Question, Tabbook, TabbookColumn, TabbookQuestion } from "./types"
 import type { ClientPayload } from "./psi/service"
 import type { UncertaintyResult } from "./psi/uncertainty"
 import { isNeutralLabel } from "./scales"
+import { formatSummaryValue } from "./tabbook-format"
 
 const PAGE_W = 612
 const PAGE_H = 792
 const M = 54
 const CONTENT_W = PAGE_W - M * 2
 const BOTTOM = PAGE_H - 70 // content stops here; footer sits below
+const MAX_REPORT_BARS = 14 // renderer backstop: never chart more options than fit a page
 
 const NAVY = "#0f1e3d"
 const PRIMARY = "#4f46e5"
@@ -162,6 +164,217 @@ export function buildReportPdf({ payload, summary, crosstabs = [], uncertainty =
 
     doc.end()
   })
+}
+
+// ── Aggregate (already-processed) tabbook / toplines → PDF ────────────────────
+// Renders an already-processed export straight to PDF — the grid the user
+// uploaded, not a rebuilt methodology report (there are no respondents to model).
+// Every number is read from the parsed Tabbook. Wide tabbooks are split across
+// column "panels" so banners that don't fit the page width still print.
+
+export interface TabbookPdfInput {
+  tabbook: Tabbook
+  kind?: "tabbook" | "toplines"
+  meta?: { client?: string; pollster?: string; fieldStart?: string; fieldEnd?: string }
+}
+
+export function buildTabbookPdf({ tabbook, kind = "tabbook", meta = {} }: TabbookPdfInput): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const isToplines = kind === "toplines"
+    const doc = new PDFDocument({
+      size: "LETTER",
+      margins: { top: M, bottom: M, left: M, right: M },
+      bufferPages: true,
+      info: { Title: `${tabbook.name} — ${isToplines ? "Toplines" : "Tabbook"}`, Author: meta.pollster || "Public Sentiment Institute" },
+    })
+    const chunks: Buffer[] = []
+    doc.on("data", (c: Buffer) => chunks.push(c))
+    doc.on("end", () => resolve(Buffer.concat(chunks)))
+    doc.on("error", reject)
+
+    const r = new Renderer(doc)
+    const colCount = Math.max(0, tabbook.columns.length - 1)
+
+    // ── Cover ──────────────────────────────────────────────────────────────
+    doc.rect(0, 0, PAGE_W, 132).fill(NAVY)
+    doc.font("Helvetica-Bold").fontSize(13).fillColor("#ffffff").text("PUBLIC SENTIMENT INSTITUTE", M, 40, { characterSpacing: 1.2 })
+    doc.font("Helvetica").fontSize(9).fillColor("#aab4cf").text(isToplines ? "Toplines Export" : `Tabbook Export — ${tabbook.universe}`, M, 58)
+    doc.font("Helvetica").fontSize(8).fillColor("#aab4cf").text(`Generated ${new Date().toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" })}`, M, 40, { width: CONTENT_W, align: "right" })
+
+    r.y = 168
+    doc.font("Helvetica-Bold").fontSize(22).fillColor(INK).text(ascii(tabbook.name), M, r.y, { width: CONTENT_W })
+    r.y += doc.heightOfString(ascii(tabbook.name), { width: CONTENT_W }) + 8
+    const subline = [
+      meta.client ? `Prepared for ${meta.client}` : null,
+      meta.pollster ? `by ${meta.pollster}` : null,
+      meta.fieldStart || meta.fieldEnd ? `Field ${[meta.fieldStart, meta.fieldEnd].filter(Boolean).join(" – ")}` : null,
+    ].filter(Boolean).join("   ·   ")
+    if (subline) {
+      doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(ascii(subline), M, r.y, { width: CONTENT_W })
+      r.y += 18
+    }
+    doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(
+      isToplines
+        ? `${tabbook.questions.length} questions · ${tabbook.columns.map((c) => ascii(c.label)).join(" / ")}`
+        : `${tabbook.universe} universe · ${tabbook.questions.length} questions · ${colCount} banner column${colCount === 1 ? "" : "s"}`,
+      M, r.y, { width: CONTENT_W },
+    )
+    r.y += 22
+
+    r.callout(
+      isToplines
+        ? "This file is an already-processed toplines export — final results, not respondent-level data. Every percentage below is read directly from your file. The Pathway 3 weighting and turnout model can't be rebuilt from an aggregate file, so it isn't applied here."
+        : "This file is an already-processed tabbook — aggregate crosstab output, not respondent-level data. Every percentage is read directly from your file, and the significance flags are re-derived from those numbers and each column's unweighted n. The Pathway 3 weighting and turnout model can't be rebuilt from an aggregate file, so it isn't applied here. Cells in brand color diverge from the Total beyond the 95% confidence interval.",
+    )
+
+    r.section("Results", isToplines ? "Toplines" : `Tabbook — ${tabbook.universe}`)
+    tabbook.questions.forEach((q, qi) => tabbookQuestion(r, q, qi, tabbook.columns, kind))
+
+    // ── Footer on every page ───────────────────────────────────────────────
+    const range = doc.bufferedPageRange()
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i)
+      doc.page.margins.bottom = 0
+      doc.moveTo(M, PAGE_H - 48).lineTo(PAGE_W - M, PAGE_H - 48).strokeColor(LINE).lineWidth(0.5).stroke()
+      doc.font("Helvetica").fontSize(7.5).fillColor(FAINT)
+      doc.text(`${ascii(tabbook.name)} · Public Sentiment Institute`, M, PAGE_H - 40, { lineBreak: false })
+      doc.text(`${isToplines ? "Toplines" : tabbook.universe + " Tabbook"} · page ${i - range.start + 1} of ${range.count}`, M, PAGE_H - 40, { width: CONTENT_W, align: "right", lineBreak: false })
+    }
+
+    doc.end()
+  })
+}
+
+// One question block: heading, then the option rows × columns as a grid. Wide
+// column sets are split into successive panels, each led by the Total column.
+function tabbookQuestion(r: Renderer, q: TabbookQuestion, qi: number, cols: TabbookColumn[], kind: "tabbook" | "toplines") {
+  const doc = r.doc
+  const heading = `Q${qi + 1}. ${ascii(q.prompt)}`
+  const headH = doc.font("Helvetica-Bold").fontSize(11).heightOfString(heading, { width: CONTENT_W, lineGap: 1 })
+  r.need(headH + 44)
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(INK).text(heading, M, r.y, { width: CONTENT_W, lineGap: 1 })
+  r.y += headH + 6
+
+  // Numeric / open-ended carry no option rows — just the one-line note.
+  if (!q.rows.length) {
+    const note = q.note ? ascii(q.note) : "No tabulated options."
+    const h = doc.font("Helvetica").fontSize(9).heightOfString(note, { width: CONTENT_W })
+    r.need(h + 6)
+    doc.font("Helvetica").fontSize(9).fillColor(MUTED).text(note, M, r.y, { width: CONTENT_W })
+    r.y += h + 12
+    return
+  }
+
+  const labelW = 152
+  const avail = CONTENT_W - labelW
+  const perPanel = Math.max(1, Math.floor(avail / 46)) // 46pt min keeps "D+12.3" / "100.0%" readable
+
+  // Split column indices into panels. A tabbook leads every panel with Total
+  // (index 0) for reference; toplines columns are all peers, so just chunk them.
+  const panels: number[][] = []
+  if (kind === "toplines") {
+    for (let i = 0; i < cols.length; i += perPanel) panels.push(rangeIdx(i, Math.min(cols.length, i + perPanel)))
+  } else {
+    const banners = cols.map((_, i) => i).slice(1)
+    if (!banners.length) panels.push([0])
+    else for (let i = 0; i < banners.length; i += perPanel - 1) panels.push([0, ...banners.slice(i, i + perPanel - 1)])
+  }
+
+  panels.forEach((idxs, pi) => drawTabPanel(r, q, cols, idxs, labelW, avail / idxs.length, panels.length > 1 ? pi + 1 : 0, panels.length))
+  r.y += 8
+}
+
+function drawTabPanel(
+  r: Renderer,
+  q: TabbookQuestion,
+  cols: TabbookColumn[],
+  idxs: number[],
+  labelW: number,
+  colW: number,
+  panelNo: number,
+  panelCount: number,
+) {
+  const doc = r.doc
+  const HEADER_H = 34
+  const ROW_H = 15
+
+  if (panelNo) {
+    const groups = Array.from(new Set(idxs.map((i) => cols[i].group))).map(ascii).join(" · ")
+    r.need(11 + HEADER_H + ROW_H)
+    doc.font("Helvetica-Oblique").fontSize(7.5).fillColor(MUTED).text(`Columns ${panelNo} of ${panelCount}: ${groups}`, M, r.y)
+    r.y += 11
+  }
+
+  const drawHeader = () => {
+    doc.rect(M, r.y, CONTENT_W, HEADER_H).fill(NAVY)
+    doc.font("Helvetica-Bold").fontSize(7.5).fillColor("#ffffff").text("Response", M + 8, r.y + 13, { width: labelW - 12 })
+    idxs.forEach((ci, k) => {
+      const x = M + labelW + k * colW
+      const c = cols[ci]
+      // Two lines max for the banner label, ellipsized — keeps the n= line clear.
+      doc.font("Helvetica-Bold").fontSize(7).fillColor("#ffffff").text(ascii(c.label), x, r.y + 3, { width: colW - 4, height: 18, ellipsis: true, align: "right" })
+      if (!c.isTotal) doc.font("Helvetica").fontSize(6).fillColor("#aab4cf").text(`n=${c.unweightedN}`, x, r.y + 24, { width: colW - 4, align: "right", lineBreak: false })
+    })
+    r.y += HEADER_H
+  }
+
+  let startY = r.y
+  let startBreaks = r.breaks
+  r.need(HEADER_H + ROW_H)
+  startY = r.y
+  startBreaks = r.breaks
+  drawHeader()
+
+  const drawRow = (label: string, emphasis: boolean, alt: boolean, cell: (ci: number) => string, sig: (ci: number) => boolean) => {
+    if (r.y + ROW_H > BOTTOM) {
+      frameTabPanel(r, startY, labelW, startBreaks)
+      r.addPage()
+      startY = r.y
+      startBreaks = r.breaks
+      drawHeader()
+    }
+    if (alt) doc.rect(M, r.y, CONTENT_W, ROW_H).fill(ROW_ALT)
+    // Clamp to one line + ellipsis so a long option never spills into the next row.
+    doc.font(emphasis ? "Helvetica-Bold" : "Helvetica").fontSize(7.5).fillColor(emphasis ? INK : BODY).text(ascii(label), M + 8, r.y + 4, { width: labelW - 12, height: 10, ellipsis: true, lineBreak: false })
+    idxs.forEach((ci, k) => {
+      const x = M + labelW + k * colW
+      const isTot = cols[ci].isTotal
+      if (sig(ci)) doc.font("Helvetica-Bold").fillColor(PRIMARY)
+      else doc.font(isTot || emphasis ? "Helvetica-Bold" : "Helvetica").fillColor(isTot || emphasis ? INK : "#4b5563")
+      doc.fontSize(7.5).text(cell(ci), x, r.y + 4, { width: colW - 4, align: "right" })
+    })
+    doc.moveTo(M, r.y + ROW_H).lineTo(PAGE_W - M, r.y + ROW_H).strokeColor(LINE).lineWidth(0.3).stroke()
+    r.y += ROW_H
+  }
+
+  q.rows.forEach((row, ri) =>
+    drawRow(
+      row.label,
+      false,
+      ri % 2 === 1,
+      (ci) => (q.valueFormat === "rank" ? (row.pct[ci] ?? 0).toFixed(2) : `${(row.pct[ci] ?? 0).toFixed(1)}%`),
+      (ci) => !cols[ci].isTotal && !!row.significant[ci],
+    ),
+  )
+  for (const s of q.summary || []) {
+    drawRow(s.label, !!s.emphasis, false, (ci) => formatSummaryValue(s.values[ci] ?? 0, s.format), () => false)
+  }
+
+  frameTabPanel(r, startY, labelW, startBreaks)
+  r.y += 10
+}
+
+// Outer border + the separator after the label column, for the current segment.
+function frameTabPanel(r: Renderer, startY: number, labelW: number, startBreaks: number) {
+  if (r.breaks !== startBreaks) return // spilled to a new page; the segment border is skipped
+  r.doc.rect(M, startY, CONTENT_W, r.y - startY).strokeColor(LINE).lineWidth(0.8).stroke()
+  r.doc.moveTo(M + labelW, startY).lineTo(M + labelW, r.y).strokeColor(LINE).lineWidth(0.4).stroke()
+}
+
+function rangeIdx(a: number, b: number): number[] {
+  const out: number[] = []
+  for (let i = a; i < b; i++) out.push(i)
+  return out
 }
 
 // ── Renderer: cursor + reusable blocks ────────────────────────────────────────
@@ -432,7 +645,11 @@ function drawUniverseBars(doc: Doc, title: string, q: Question, x: number, y: nu
   y += 14
   const neutralIdx = q.scaleMeta?.neutralIndex ?? -1
   const barW = w - 30
-  q.options.forEach((o, idx) => {
+  // Hard cap so a question that slipped through with many options can never
+  // overflow the page into blank/garbled pages. Upstream already folds long
+  // categorical tails into "Other"; this is the renderer's own backstop.
+  const shown = q.options.slice(0, MAX_REPORT_BARS)
+  shown.forEach((o, idx) => {
     let color = PRIMARY
     if (q.type === "scale") {
       if (neutralIdx >= 0 && idx === neutralIdx) color = FAINT
@@ -451,13 +668,20 @@ function drawUniverseBars(doc: Doc, title: string, q: Question, x: number, y: nu
     doc.font("Helvetica-Bold").fontSize(7.5).fillColor(BODY).text(`${pct.toFixed(0)}%`, x + barW + 3, y, { width: 28, align: "left" })
     y += 11
   })
+  const hidden = q.options.length - shown.length
+  if (hidden > 0) {
+    doc.font("Helvetica-Oblique").fontSize(7.5).fillColor(MUTED).text(`+${hidden} more option${hidden === 1 ? "" : "s"} not shown`, x, y, { width: w })
+    y += 11
+  }
   return y
 }
 
 // Estimated height of a universe column for page-break planning.
 function measureUniverse(doc: Doc, q: Question, w: number): number {
   let h = 14
-  for (const o of q.options) h += doc.font("Helvetica").fontSize(8).heightOfString(ascii(o.label), { width: w }) + 1 + 11
+  const shown = q.options.slice(0, MAX_REPORT_BARS)
+  if (q.options.length > shown.length) h += 11 // "+N more" note
+  for (const o of shown) h += doc.font("Helvetica").fontSize(8).heightOfString(ascii(o.label), { width: w }) + 1 + 11
   return h
 }
 

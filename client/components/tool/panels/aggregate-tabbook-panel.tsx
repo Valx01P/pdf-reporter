@@ -1,8 +1,8 @@
 "use client"
 
-import { Download, Info } from "lucide-react"
+import { Download, FileText, Info } from "lucide-react"
 import { Card, CardBody, CardHeader } from "@/components/ui/card"
-import { fetchExportFile, type RunConfig } from "@/lib/client-api"
+import { fetchExportFile, fetchReportFile, type RunConfig } from "@/lib/client-api"
 import { ExportConfirmButton } from "../export-confirm"
 import { TabbookGrid } from "./crosstab-panel"
 import type { Tabbook } from "@/lib/types"
@@ -37,15 +37,24 @@ export function AggregateTabbookPanel({
             : `${tabbook.universe} · ${tabbook.questions.length} questions · ${colCount} banner columns`
         }
         action={
-          <ExportConfirmButton
-            variant="compact"
-            label={isToplines ? "Toplines CSV" : "Tabbook CSV"}
-            icon={Download}
-            title="Preview the normalized CSV, then confirm to download"
-            fetchFile={() =>
-              fetchExportFile({ csvText, name, ...config, format: isToplines ? "csv" : tabbook.universe === "LV" ? "tabbook-lv" : "tabbook-rv" })
-            }
-          />
+          <div className="flex items-center gap-2">
+            <ExportConfirmButton
+              variant="compact"
+              label="PDF"
+              icon={FileText}
+              title="Preview the grid as a PDF, then confirm to download"
+              fetchFile={() => fetchReportFile({ csvText, name, ...config })}
+            />
+            <ExportConfirmButton
+              variant="compact"
+              label={isToplines ? "Toplines CSV" : "Tabbook CSV"}
+              icon={Download}
+              title="Preview the normalized CSV, then confirm to download"
+              fetchFile={() =>
+                fetchExportFile({ csvText, name, ...config, format: isToplines ? "csv" : tabbook.universe === "LV" ? "tabbook-lv" : "tabbook-rv" })
+              }
+            />
+          </div>
         }
       />
       <CardBody className="flex flex-col gap-3">
